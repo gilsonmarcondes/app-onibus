@@ -7,8 +7,9 @@ import gzip
 from streamlit_geolocation import streamlit_geolocation
 import googlemaps
 import polyline
-from datetime import datetime # Lida com datas e horas
-import pytz # Lida com o fuso horário do Brasil
+from datetime import datetime
+import pytz
+from streamlit_autorefresh import st_autorefresh # <-- NOVA BIBLIOTECA DO CRONÔMETRO
 
 st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide")
 
@@ -38,15 +39,20 @@ with col1:
     st.write("🎯 **2. Para onde quer ir?**")
     destino = st.text_input("Destino:", placeholder="Ex: Avenida Paulista, 1000")
 
-    # --- NOVO: A MÁQUINA DO TEMPO (ESCOLHA DE HORÁRIO) ---
     st.write("🕒 **3. Quando você quer viajar?**")
     opcao_horario = st.selectbox("Escolha o momento:", ["Sair agora", "Partir às...", "Chegar até..."])
+    
+    # --- NOVO: LIGA O RADAR SE FOR PARA "AGORA" ---
+    if opcao_horario == "Sair agora":
+        # Atualiza a página inteira a cada 30 segundos (30.000 milissegundos)
+        st_autorefresh(interval=30000, limit=None, key="radar_onibus")
+        st.caption("⏳ *Radar Automático Ativado (Atualiza a cada 30s)*")
+    # ----------------------------------------------
     
     data_viagem = None
     hora_viagem = None
     
     if opcao_horario != "Sair agora":
-        # Cria duas colunas para o calendário e o relógio ficarem lado a lado
         cd, ch = st.columns(2)
         data_viagem = cd.date_input("Data da viagem")
         hora_viagem = ch.time_input("Hora da viagem")
@@ -99,12 +105,10 @@ with col1:
     detalhes_itinerario = []
 
     if origem_final and destino:
-        with st.spinner("Calculando a viagem no tempo..."):
+        with st.spinner("Calculando rotas e horários..."):
             try:
-                # Configura o fuso horário de São Paulo para o servidor não se perder
                 fuso_sp = pytz.timezone('America/Sao_Paulo')
                 
-                # Prepara as instruções para o Google
                 instrucoes_google = {
                     "mode": "transit",
                     "region": "br",
@@ -113,23 +117,18 @@ with col1:
                     "transit_routing_preference": routing_pref
                 }
 
-                # Aplica a lógica do tempo
                 if opcao_horario == "Sair agora":
                     instrucoes_google["departure_time"] = datetime.now(fuso_sp)
                 else:
-                    # Junta a data e a hora que você escolheu na tela com o fuso de SP
                     dt_escolhida = fuso_sp.localize(datetime.combine(data_viagem, hora_viagem))
-                    
                     if opcao_horario == "Partir às...":
                         instrucoes_google["departure_time"] = dt_escolhida
                     elif opcao_horario == "Chegar até...":
                         instrucoes_google["arrival_time"] = dt_escolhida
 
-                # Pede a rota com todas as instruções (inclusive a hora)
                 rotas = gmaps.directions(origem_final, destino, **instrucoes_google)
                 
                 if rotas:
-                    # Ordena pela rota mais rápida
                     rotas = sorted(rotas, key=lambda x: x['legs'][0]['duration']['value'])
                     opcoes_rotas = {}
                     
@@ -211,8 +210,6 @@ with col2:
                 else:
                     folium.PolyLine(coordenadas, color="purple", weight=5, tooltip="Metrô/Trem").add_to(m)
 
-        # Só busca os ônibus em tempo real se a viagem for para "AGORA"
-        # Não faz sentido mostrar ônibus agora se a viagem for pra amanhã
         if opcao_horario == "Sair agora":
             onibus_encontrados = 0
             for linha_nome in linhas_para_buscar:
@@ -238,5 +235,6 @@ with col2:
 
     st_folium(m, width=800, height=600, returned_objects=[])
     
-    if st.button('🔄 Atualizar Posições (Tempo Real)'):
+    # O botão manual continua aqui caso você queira forçar uma atualização antes dos 30 segundos!
+    if st.button('🔄 Forçar Atualização Imediata'):
         st.rerun()
