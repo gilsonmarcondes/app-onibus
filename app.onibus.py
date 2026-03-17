@@ -15,23 +15,19 @@ st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide")
 
 st.title("🗺️ Roteirizador Multimodal SPTrans")
 
-# --- CHAVES DE ACESSO ---
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
 CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' 
-CHAVE_CLIMA = '1fb1b9310c7e1e3192d52f5821b0c1ab' # <-- SUA NOVA CHAVE AQUI
+CHAVE_CLIMA = '1fb1b9310c7e1e3192d52f5821b0c1ab'
 
 gmaps = googlemaps.Client(key=CHAVE_GOOGLE)
 
-# --- FUNÇÃO DO CLIMA ---
 def obter_clima_destino(lat, lon, api_key):
-    # Consulta a API do OpenWeatherMap em português e em Celsius (metric)
     url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric&lang=pt_br"
     try:
         resposta = requests.get(url).json()
         if resposta.get('main'):
             temp = round(resposta['main']['temp'])
             descricao = resposta['weather'][0]['description'].capitalize()
-            # Mapeia ícones simples baseado na descrição
             icone = "☀️" if "limpo" in descricao.lower() else "☁️" if "nublado" in descricao.lower() else "🌧️" if "chuva" in descricao.lower() else "⛅"
             return f"{icone} **{temp}°C** - {descricao}"
     except:
@@ -149,7 +145,6 @@ with col1:
                     rotas = sorted(rotas, key=lambda x: x['legs'][0]['duration']['value'])
                     opcoes_rotas = {}
                     
-                    # Captura as coordenadas finais do destino para ver o clima lá
                     destino_lat = rotas[0]['legs'][0]['end_location']['lat']
                     destino_lon = rotas[0]['legs'][0]['end_location']['lng']
                     
@@ -169,13 +164,15 @@ with col1:
                             elif passo['travel_mode'] == 'TRANSIT':
                                 detalhes = passo['transit_details']
                                 tipo = detalhes['line']['vehicle']['type']
-                                nome_linha = detalhes['line']['short_name']
+                                
+                                # A CORREÇÃO ESTÁ AQUI: Aceita short_name ou name
+                                nome_linha = detalhes['line'].get('short_name') or detalhes['line'].get('name') or "Linha"
                                 
                                 hora_saida = detalhes['departure_time']['text']
                                 hora_chegada = detalhes['arrival_time']['text']
                                 ponto_embarque = detalhes['departure_stop']['name']
                                 
-                                info_passo = f"🕒 **{hora_saida}** - Embarque na linha **{nome_linha}**\n📍 *Ponto: {ponto_embarque}*\n🕒 **{hora_chegada}** - Desembarque"
+                                info_passo = f"🕒 **{hora_saida}** - Embarque: **{nome_linha}**\n📍 *Ponto: {ponto_embarque}*\n🕒 **{hora_chegada}** - Desembarque"
                                 
                                 if tipo == 'BUS':
                                     resumo.append(f"🚌 {nome_linha}")
@@ -198,7 +195,6 @@ with col1:
                         linhas_para_buscar = opcoes_rotas[escolha]['linhas_bus']
                         detalhes_itinerario = opcoes_rotas[escolha]['cronograma']
                         
-                        # --- EXIBE O CLIMA ANTES DO ITINERÁRIO ---
                         if CHAVE_CLIMA != 'COLOQUE_A_SUA_CHAVE_DO_CLIMA_AQUI':
                             clima_atual = obter_clima_destino(destino_lat, destino_lon, CHAVE_CLIMA)
                             if clima_atual:
@@ -232,18 +228,22 @@ with col2:
             if passo['travel_mode'] == 'WALKING':
                 folium.PolyLine(coordenadas, color="gray", weight=4, dash_array='10', tooltip="Caminhada").add_to(m)
             elif passo['travel_mode'] == 'TRANSIT':
+                # A CORREÇÃO NO MAPA ESTÁ AQUI
+                nome_tooltip = passo['transit_details']['line'].get('short_name') or passo['transit_details']['line'].get('name') or "Linha"
+                
                 if passo['transit_details']['line']['vehicle']['type'] == 'BUS':
-                    folium.PolyLine(coordenadas, color="#FF0000", weight=5, tooltip=f"Ônibus {passo['transit_details']['line']['short_name']}").add_to(m)
+                    folium.PolyLine(coordenadas, color="#FF0000", weight=5, tooltip=f"Ônibus {nome_tooltip}").add_to(m)
                 else:
-                    folium.PolyLine(coordenadas, color="purple", weight=5, tooltip="Metrô/Trem").add_to(m)
+                    folium.PolyLine(coordenadas, color="purple", weight=5, tooltip=f"Trilhos {nome_tooltip}").add_to(m)
 
         if opcao_horario == "Sair agora":
             onibus_encontrados = 0
             for linha_nome in linhas_para_buscar:
+                # Se for uma linha de Londres, o código vai tentar buscar na SPTrans, não vai achar nada, e vai passar reto graciosamente sem travar.
                 numero = linha_nome.split('-')[0]
                 linhas_sptrans = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={numero}").json()
                 
-                if linhas_sptrans:
+                if isinstance(linhas_sptrans, list): # Garante que só processa se a SPTrans responder corretamente
                     for l in linhas_sptrans:
                         frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l['cl']}").json()
                         if frota and 'vs' in frota:
@@ -257,8 +257,6 @@ with col2:
             
             if onibus_encontrados > 0:
                 st.success(f"🚌 {onibus_encontrados} ônibus monitorados em tempo real na rota.")
-            else:
-                st.warning("Nenhum ônibus desta linha localizado no radar agora.")
 
     st_folium(m, width=800, height=600, returned_objects=[])
     
