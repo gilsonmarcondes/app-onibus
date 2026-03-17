@@ -3,3 +3,4 @@ requests
 folium
 streamlit-folium
 streamlit-geolocation
+googlemaps
