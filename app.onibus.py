@@ -12,9 +12,8 @@ st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide")
 
 st.title("🗺️ Roteirizador Multimodal SPTrans")
 
-# --- CHAVES DE ACESSO ---
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
-CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' # <-- SUA CHAVE AQUI
+CHAVE_GOOGLE = 'COLOQUE_A_SUA_CHAVE_DO_GOOGLE_AQUI' # <-- SUA CHAVE AQUI
 
 gmaps = googlemaps.Client(key=CHAVE_GOOGLE)
 
@@ -30,27 +29,19 @@ trajetos_sp = carregar_gtfs()
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    # --- 1. A NOVA LÓGICA DE ORIGEM (GPS ou TEXTO) ---
     st.write("📍 **1. De onde você vai sair?**")
-    
-    # O botão de GPS continua disponível
     localizacao = streamlit_geolocation()
-    
-    # O novo campo para digitar o endereço
-    origem_digitada = st.text_input("Ou digite o endereço de partida:", placeholder="Ex: Terminal Bandeira ou UNESP")
+    origem_digitada = st.text_input("Ou digite o endereço de partida:")
     
     st.write("🎯 **2. Para onde quer ir?**")
     destino = st.text_input("Destino:", placeholder="Ex: Avenida Paulista, 1000")
     
-    # Variáveis padrão
     origem_final = None
     minha_lat, minha_lon = -23.6331, -46.7028
     zoom_mapa = 13
     
-    # O CÉREBRO DA ORIGEM: Decide se usa o texto ou o GPS
     if origem_digitada:
         origem_final = origem_digitada
-        # Pede pro Google converter o texto em coordenadas para centrar o mapa certinho
         try:
             geo = gmaps.geocode(origem_digitada)
             if geo:
@@ -68,12 +59,11 @@ with col1:
     
     rota_selecionada = None
     linhas_para_buscar = []
+    detalhes_itinerario = [] # Guarda os horários para mostrar na tela
 
-    # --- 2. O ROTEIRIZADOR ---
     if origem_final and destino:
-        with st.spinner("Analisando as melhores rotas..."):
+        with st.spinner("Analisando rotas e horários..."):
             try:
-                # Agora ele manda a origem_final (que pode ser texto ou GPS) pro Google
                 rotas = gmaps.directions(origem_final, destino, mode="transit", region="br", alternatives=True)
                 
                 if rotas:
@@ -83,38 +73,59 @@ with col1:
                         passos = rota['legs'][0]['steps']
                         resumo = []
                         linhas_bus = []
+                        cronograma = [] # Guarda o passo a passo desta rota específica
                         
                         for passo in passos:
                             if passo['travel_mode'] == 'WALKING':
                                 resumo.append("🚶")
+                                cronograma.append(f"🚶 Caminhada ({passo['duration']['text']})")
+                            
                             elif passo['travel_mode'] == 'TRANSIT':
                                 detalhes = passo['transit_details']
                                 tipo = detalhes['line']['vehicle']['type']
                                 nome_linha = detalhes['line']['short_name']
                                 
+                                # Pega os horários e o nome do ponto fornecidos pelo Google
+                                hora_saida = detalhes['departure_time']['text']
+                                hora_chegada = detalhes['arrival_time']['text']
+                                ponto_embarque = detalhes['departure_stop']['name']
+                                
+                                info_passo = f"🕒 **{hora_saida}** - Embarque na linha **{nome_linha}**\n📍 *Ponto: {ponto_embarque}*\n🕒 **{hora_chegada}** - Desembarque"
+                                
                                 if tipo == 'BUS':
                                     resumo.append(f"🚌 {nome_linha}")
                                     linhas_bus.append(nome_linha)
+                                    cronograma.append("🚌 " + info_passo)
                                 elif tipo in ['SUBWAY', 'TRAIN']:
                                     resumo.append(f"🚆 {nome_linha}")
+                                    cronograma.append("🚆 " + info_passo)
                         
                         titulo = f"Opção {i+1}: " + " ➔ ".join(resumo)
-                        opcoes_rotas[titulo] = {'rota': rota, 'linhas_bus': linhas_bus}
+                        opcoes_rotas[titulo] = {
+                            'rota': rota, 
+                            'linhas_bus': linhas_bus,
+                            'cronograma': cronograma
+                        }
                     
                     if opcoes_rotas:
-                        escolha = st.radio("Selecione o seu trajeto completo:", list(opcoes_rotas.keys()))
+                        escolha = st.radio("Selecione o seu trajeto:", list(opcoes_rotas.keys()))
                         rota_selecionada = opcoes_rotas[escolha]['rota']
                         linhas_para_buscar = opcoes_rotas[escolha]['linhas_bus']
+                        detalhes_itinerario = opcoes_rotas[escolha]['cronograma']
+                        
+                        # --- NOVO: MOSTRA OS HORÁRIOS NA TELA ---
+                        st.markdown("### 📋 Itinerário Detalhado")
+                        for item in detalhes_itinerario:
+                            st.info(item)
+                            
                     else:
-                        st.warning("Nenhuma rota de transporte público encontrada.")
+                        st.warning("Nenhuma rota encontrada.")
             except Exception as e:
                 st.error(f"Erro no Google: {e}")
 
-# --- 3. DESENHANDO O MAPA ---
 with col2:
     m = folium.Map(location=[minha_lat, minha_lon], zoom_start=zoom_mapa, tiles='CartoDB positron')
     
-    # Coloca o marcador verde na origem (seja do GPS ou do endereço digitado)
     if origem_final:
         folium.Marker([minha_lat, minha_lon], popup="Origem", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m)
 
@@ -154,7 +165,7 @@ with col2:
                             ).add_to(m)
         
         if onibus_encontrados > 0:
-            st.success(f"🚌 Rota ativa! {onibus_encontrados} ônibus monitorados em tempo real.")
+            st.success(f"🚌 {onibus_encontrados} ônibus monitorados em tempo real na rota.")
 
     else:
         st.write("Ou faça a busca manual de uma linha:")
