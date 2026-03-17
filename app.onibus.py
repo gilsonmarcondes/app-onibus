@@ -7,6 +7,8 @@ import gzip
 from streamlit_geolocation import streamlit_geolocation
 import googlemaps
 import polyline
+from datetime import datetime # Lida com datas e horas
+import pytz # Lida com o fuso horário do Brasil
 
 st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide")
 
@@ -36,8 +38,21 @@ with col1:
     st.write("🎯 **2. Para onde quer ir?**")
     destino = st.text_input("Destino:", placeholder="Ex: Avenida Paulista, 1000")
 
-    # --- NOVO: PAINEL DE FILTROS ---
-    with st.expander("⚙️ Filtros e Preferências (Moovit Style)"):
+    # --- NOVO: A MÁQUINA DO TEMPO (ESCOLHA DE HORÁRIO) ---
+    st.write("🕒 **3. Quando você quer viajar?**")
+    opcao_horario = st.selectbox("Escolha o momento:", ["Sair agora", "Partir às...", "Chegar até..."])
+    
+    data_viagem = None
+    hora_viagem = None
+    
+    if opcao_horario != "Sair agora":
+        # Cria duas colunas para o calendário e o relógio ficarem lado a lado
+        cd, ch = st.columns(2)
+        data_viagem = cd.date_input("Data da viagem")
+        hora_viagem = ch.time_input("Hora da viagem")
+    st.divider()
+
+    with st.expander("⚙️ Filtros e Preferências"):
         st.write("**Escolha os meios de transporte:**")
         c1, c2, c3 = st.columns(3)
         usar_onibus = c1.checkbox("🚌 Ônibus", value=True)
@@ -49,20 +64,14 @@ with col1:
         if usar_metro: modos_selecionados.append("subway")
         if usar_trem: modos_selecionados.append("train")
         
-        # Prevenção de erro: se o usuário desmarcar tudo, usamos todos por padrão
         if not modos_selecionados:
             modos_selecionados = ["bus", "subway", "train"]
 
-        st.write("**Preferência de Rota:**")
         preferencia = st.radio("Priorizar:", ["⏳ Mais Rápida", "🚶 Menos Caminhada", "🔄 Menos Baldeações"], horizontal=True)
 
-        # Traduz a escolha para o idioma do Google Maps
         routing_pref = None
-        if preferencia == "🚶 Menos Caminhada":
-            routing_pref = "less_walking"
-        elif preferencia == "🔄 Menos Baldeações":
-            routing_pref = "fewer_transfers"
-    # -------------------------------
+        if preferencia == "🚶 Menos Caminhada": routing_pref = "less_walking"
+        elif preferencia == "🔄 Menos Baldeações": routing_pref = "fewer_transfers"
     
     origem_final = None
     minha_lat, minha_lon = -23.6331, -46.7028
@@ -90,28 +99,43 @@ with col1:
     detalhes_itinerario = []
 
     if origem_final and destino:
-        with st.spinner("Analisando rotas, filtros e horários..."):
+        with st.spinner("Calculando a viagem no tempo..."):
             try:
-                # O Google agora recebe os nossos filtros!
-                rotas = gmaps.directions(
-                    origem_final, 
-                    destino, 
-                    mode="transit", 
-                    region="br", 
-                    alternatives=True,
-                    transit_mode=modos_selecionados,
-                    transit_routing_preference=routing_pref
-                )
+                # Configura o fuso horário de São Paulo para o servidor não se perder
+                fuso_sp = pytz.timezone('America/Sao_Paulo')
+                
+                # Prepara as instruções para o Google
+                instrucoes_google = {
+                    "mode": "transit",
+                    "region": "br",
+                    "alternatives": True,
+                    "transit_mode": modos_selecionados,
+                    "transit_routing_preference": routing_pref
+                }
+
+                # Aplica a lógica do tempo
+                if opcao_horario == "Sair agora":
+                    instrucoes_google["departure_time"] = datetime.now(fuso_sp)
+                else:
+                    # Junta a data e a hora que você escolheu na tela com o fuso de SP
+                    dt_escolhida = fuso_sp.localize(datetime.combine(data_viagem, hora_viagem))
+                    
+                    if opcao_horario == "Partir às...":
+                        instrucoes_google["departure_time"] = dt_escolhida
+                    elif opcao_horario == "Chegar até...":
+                        instrucoes_google["arrival_time"] = dt_escolhida
+
+                # Pede a rota com todas as instruções (inclusive a hora)
+                rotas = gmaps.directions(origem_final, destino, **instrucoes_google)
                 
                 if rotas:
-                    # Força a ordenação pela rota mais rápida (menor tempo de duração em segundos)
+                    # Ordena pela rota mais rápida
                     rotas = sorted(rotas, key=lambda x: x['legs'][0]['duration']['value'])
-                    
                     opcoes_rotas = {}
                     
                     for i, rota in enumerate(rotas):
                         passos = rota['legs'][0]['steps']
-                        tempo_total = rota['legs'][0]['duration']['text'] # Pega o tempo total (Ex: 45 min)
+                        tempo_total = rota['legs'][0]['duration']['text']
                         
                         resumo = []
                         linhas_bus = []
@@ -141,7 +165,6 @@ with col1:
                                     resumo.append(f"🚆 {nome_linha}")
                                     cronograma.append("🚆 " + info_passo)
                         
-                        # Coloca o tempo total visível no título
                         titulo = f"Opção {i+1} ({tempo_total}): " + " ➔ ".join(resumo)
                         opcoes_rotas[titulo] = {
                             'rota': rota, 
@@ -160,7 +183,7 @@ with col1:
                             st.info(item)
                             
                     else:
-                        st.warning("Nenhuma rota encontrada com esses filtros.")
+                        st.warning("Nenhuma rota encontrada para este horário.")
             except Exception as e:
                 st.error(f"Erro no Google: {e}")
 
@@ -188,45 +211,30 @@ with col2:
                 else:
                     folium.PolyLine(coordenadas, color="purple", weight=5, tooltip="Metrô/Trem").add_to(m)
 
-        onibus_encontrados = 0
-        for linha_nome in linhas_para_buscar:
-            numero = linha_nome.split('-')[0]
-            linhas_sptrans = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={numero}").json()
+        # Só busca os ônibus em tempo real se a viagem for para "AGORA"
+        # Não faz sentido mostrar ônibus agora se a viagem for pra amanhã
+        if opcao_horario == "Sair agora":
+            onibus_encontrados = 0
+            for linha_nome in linhas_para_buscar:
+                numero = linha_nome.split('-')[0]
+                linhas_sptrans = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={numero}").json()
+                
+                if linhas_sptrans:
+                    for l in linhas_sptrans:
+                        frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l['cl']}").json()
+                        if frota and 'vs' in frota:
+                            for v in frota['vs']:
+                                onibus_encontrados += 1
+                                folium.Marker(
+                                    [v['py'], v['px']],
+                                    popup=f"Linha: {linha_nome} | Prefixo: {v['p']}",
+                                    icon=folium.Icon(color='blue', icon='bus', prefix='fa')
+                                ).add_to(m)
             
-            if linhas_sptrans:
-                for l in linhas_sptrans:
-                    frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l['cl']}").json()
-                    if frota and 'vs' in frota:
-                        for v in frota['vs']:
-                            onibus_encontrados += 1
-                            folium.Marker(
-                                [v['py'], v['px']],
-                                popup=f"Linha: {linha_nome} | Prefixo: {v['p']}",
-                                icon=folium.Icon(color='blue', icon='bus', prefix='fa')
-                            ).add_to(m)
-        
-        if onibus_encontrados > 0:
-            st.success(f"🚌 {onibus_encontrados} ônibus monitorados em tempo real na rota.")
-
-    else:
-        st.write("Ou faça a busca manual de uma linha:")
-        linha_busca = st.text_input("Digite a linha (ex: 7550):")
-        if linha_busca:
-            linhas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={linha_busca}").json()
-            if linhas:
-                opcoes = {f"{l.get('lt')} | {l.get('tp')} ➔ {l.get('ts')}" if l.get('sl')==1 else f"{l.get('lt')} | {l.get('ts')} ➔ {l.get('tp')}": l for l in linhas}
-                escolha = st.selectbox("Escolha o sentido:", list(opcoes.keys()))
-                l_sel = opcoes[escolha]
-                
-                chave = f"{l_sel.get('lt')}-{l_sel.get('tl')}-{l_sel.get('sl')}"
-                if chave in trajetos_sp:
-                    folium.PolyLine(trajetos_sp[chave], color="red", weight=4).add_to(m)
-                
-                frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
-                if frota and 'vs' in frota:
-                    for v in frota['vs']:
-                        folium.Marker([v['py'], v['px']], popup=f"Prefixo: {v['p']}", icon=folium.Icon(color='blue', icon='bus', prefix='fa')).add_to(m)
-                    st.success(f"Encontrados {len(frota['vs'])} ônibus.")
+            if onibus_encontrados > 0:
+                st.success(f"🚌 {onibus_encontrados} ônibus monitorados em tempo real na rota.")
+            else:
+                st.warning("Nenhum ônibus desta linha localizado no radar agora.")
 
     st_folium(m, width=800, height=600, returned_objects=[])
     
