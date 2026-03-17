@@ -9,16 +9,34 @@ import googlemaps
 import polyline
 from datetime import datetime
 import pytz
-from streamlit_autorefresh import st_autorefresh # <-- NOVA BIBLIOTECA DO CRONÔMETRO
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide")
 
 st.title("🗺️ Roteirizador Multimodal SPTrans")
 
+# --- CHAVES DE ACESSO ---
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
-CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' # <-- SUA CHAVE AQUI
+CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' 
+CHAVE_CLIMA = '1fb1b9310c7e1e3192d52f5821b0c1ab' # <-- SUA NOVA CHAVE AQUI
 
 gmaps = googlemaps.Client(key=CHAVE_GOOGLE)
+
+# --- FUNÇÃO DO CLIMA ---
+def obter_clima_destino(lat, lon, api_key):
+    # Consulta a API do OpenWeatherMap em português e em Celsius (metric)
+    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric&lang=pt_br"
+    try:
+        resposta = requests.get(url).json()
+        if resposta.get('main'):
+            temp = round(resposta['main']['temp'])
+            descricao = resposta['weather'][0]['description'].capitalize()
+            # Mapeia ícones simples baseado na descrição
+            icone = "☀️" if "limpo" in descricao.lower() else "☁️" if "nublado" in descricao.lower() else "🌧️" if "chuva" in descricao.lower() else "⛅"
+            return f"{icone} **{temp}°C** - {descricao}"
+    except:
+        pass
+    return None
 
 @st.cache_data
 def carregar_gtfs():
@@ -42,12 +60,9 @@ with col1:
     st.write("🕒 **3. Quando você quer viajar?**")
     opcao_horario = st.selectbox("Escolha o momento:", ["Sair agora", "Partir às...", "Chegar até..."])
     
-    # --- NOVO: LIGA O RADAR SE FOR PARA "AGORA" ---
     if opcao_horario == "Sair agora":
-        # Atualiza a página inteira a cada 30 segundos (30.000 milissegundos)
         st_autorefresh(interval=30000, limit=None, key="radar_onibus")
         st.caption("⏳ *Radar Automático Ativado (Atualiza a cada 30s)*")
-    # ----------------------------------------------
     
     data_viagem = None
     hora_viagem = None
@@ -103,9 +118,11 @@ with col1:
     rota_selecionada = None
     linhas_para_buscar = []
     detalhes_itinerario = []
+    destino_lat = None
+    destino_lon = None
 
     if origem_final and destino:
-        with st.spinner("Calculando rotas e horários..."):
+        with st.spinner("Calculando rotas e verificando o clima..."):
             try:
                 fuso_sp = pytz.timezone('America/Sao_Paulo')
                 
@@ -131,6 +148,10 @@ with col1:
                 if rotas:
                     rotas = sorted(rotas, key=lambda x: x['legs'][0]['duration']['value'])
                     opcoes_rotas = {}
+                    
+                    # Captura as coordenadas finais do destino para ver o clima lá
+                    destino_lat = rotas[0]['legs'][0]['end_location']['lat']
+                    destino_lon = rotas[0]['legs'][0]['end_location']['lng']
                     
                     for i, rota in enumerate(rotas):
                         passos = rota['legs'][0]['steps']
@@ -177,6 +198,12 @@ with col1:
                         linhas_para_buscar = opcoes_rotas[escolha]['linhas_bus']
                         detalhes_itinerario = opcoes_rotas[escolha]['cronograma']
                         
+                        # --- EXIBE O CLIMA ANTES DO ITINERÁRIO ---
+                        if CHAVE_CLIMA != 'COLOQUE_A_SUA_CHAVE_DO_CLIMA_AQUI':
+                            clima_atual = obter_clima_destino(destino_lat, destino_lon, CHAVE_CLIMA)
+                            if clima_atual:
+                                st.success(f"Condições no destino agora: {clima_atual}")
+                        
                         st.markdown("### 📋 Itinerário Detalhado")
                         for item in detalhes_itinerario:
                             st.info(item)
@@ -184,7 +211,7 @@ with col1:
                     else:
                         st.warning("Nenhuma rota encontrada para este horário.")
             except Exception as e:
-                st.error(f"Erro no Google: {e}")
+                st.error(f"Erro na busca: {e}")
 
 with col2:
     m = folium.Map(location=[minha_lat, minha_lon], zoom_start=zoom_mapa, tiles='CartoDB positron')
@@ -235,6 +262,5 @@ with col2:
 
     st_folium(m, width=800, height=600, returned_objects=[])
     
-    # O botão manual continua aqui caso você queira forçar uma atualização antes dos 30 segundos!
     if st.button('🔄 Forçar Atualização Imediata'):
         st.rerun()
