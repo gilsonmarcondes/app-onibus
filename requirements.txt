@@ -4,3 +4,4 @@ folium
 streamlit-folium
 streamlit-geolocation
 googlemaps
+polyline
