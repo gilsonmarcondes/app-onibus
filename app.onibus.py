@@ -35,6 +35,34 @@ with col1:
     
     st.write("🎯 **2. Para onde quer ir?**")
     destino = st.text_input("Destino:", placeholder="Ex: Avenida Paulista, 1000")
+
+    # --- NOVO: PAINEL DE FILTROS ---
+    with st.expander("⚙️ Filtros e Preferências (Moovit Style)"):
+        st.write("**Escolha os meios de transporte:**")
+        c1, c2, c3 = st.columns(3)
+        usar_onibus = c1.checkbox("🚌 Ônibus", value=True)
+        usar_metro = c2.checkbox("🚇 Metrô", value=True)
+        usar_trem = c3.checkbox("🚆 Trem", value=True)
+
+        modos_selecionados = []
+        if usar_onibus: modos_selecionados.append("bus")
+        if usar_metro: modos_selecionados.append("subway")
+        if usar_trem: modos_selecionados.append("train")
+        
+        # Prevenção de erro: se o usuário desmarcar tudo, usamos todos por padrão
+        if not modos_selecionados:
+            modos_selecionados = ["bus", "subway", "train"]
+
+        st.write("**Preferência de Rota:**")
+        preferencia = st.radio("Priorizar:", ["⏳ Mais Rápida", "🚶 Menos Caminhada", "🔄 Menos Baldeações"], horizontal=True)
+
+        # Traduz a escolha para o idioma do Google Maps
+        routing_pref = None
+        if preferencia == "🚶 Menos Caminhada":
+            routing_pref = "less_walking"
+        elif preferencia == "🔄 Menos Baldeações":
+            routing_pref = "fewer_transfers"
+    # -------------------------------
     
     origem_final = None
     minha_lat, minha_lon = -23.6331, -46.7028
@@ -59,21 +87,35 @@ with col1:
     
     rota_selecionada = None
     linhas_para_buscar = []
-    detalhes_itinerario = [] # Guarda os horários para mostrar na tela
+    detalhes_itinerario = []
 
     if origem_final and destino:
-        with st.spinner("Analisando rotas e horários..."):
+        with st.spinner("Analisando rotas, filtros e horários..."):
             try:
-                rotas = gmaps.directions(origem_final, destino, mode="transit", region="br", alternatives=True)
+                # O Google agora recebe os nossos filtros!
+                rotas = gmaps.directions(
+                    origem_final, 
+                    destino, 
+                    mode="transit", 
+                    region="br", 
+                    alternatives=True,
+                    transit_mode=modos_selecionados,
+                    transit_routing_preference=routing_pref
+                )
                 
                 if rotas:
+                    # Força a ordenação pela rota mais rápida (menor tempo de duração em segundos)
+                    rotas = sorted(rotas, key=lambda x: x['legs'][0]['duration']['value'])
+                    
                     opcoes_rotas = {}
                     
                     for i, rota in enumerate(rotas):
                         passos = rota['legs'][0]['steps']
+                        tempo_total = rota['legs'][0]['duration']['text'] # Pega o tempo total (Ex: 45 min)
+                        
                         resumo = []
                         linhas_bus = []
-                        cronograma = [] # Guarda o passo a passo desta rota específica
+                        cronograma = []
                         
                         for passo in passos:
                             if passo['travel_mode'] == 'WALKING':
@@ -85,7 +127,6 @@ with col1:
                                 tipo = detalhes['line']['vehicle']['type']
                                 nome_linha = detalhes['line']['short_name']
                                 
-                                # Pega os horários e o nome do ponto fornecidos pelo Google
                                 hora_saida = detalhes['departure_time']['text']
                                 hora_chegada = detalhes['arrival_time']['text']
                                 ponto_embarque = detalhes['departure_stop']['name']
@@ -100,7 +141,8 @@ with col1:
                                     resumo.append(f"🚆 {nome_linha}")
                                     cronograma.append("🚆 " + info_passo)
                         
-                        titulo = f"Opção {i+1}: " + " ➔ ".join(resumo)
+                        # Coloca o tempo total visível no título
+                        titulo = f"Opção {i+1} ({tempo_total}): " + " ➔ ".join(resumo)
                         opcoes_rotas[titulo] = {
                             'rota': rota, 
                             'linhas_bus': linhas_bus,
@@ -113,13 +155,12 @@ with col1:
                         linhas_para_buscar = opcoes_rotas[escolha]['linhas_bus']
                         detalhes_itinerario = opcoes_rotas[escolha]['cronograma']
                         
-                        # --- NOVO: MOSTRA OS HORÁRIOS NA TELA ---
                         st.markdown("### 📋 Itinerário Detalhado")
                         for item in detalhes_itinerario:
                             st.info(item)
                             
                     else:
-                        st.warning("Nenhuma rota encontrada.")
+                        st.warning("Nenhuma rota encontrada com esses filtros.")
             except Exception as e:
                 st.error(f"Erro no Google: {e}")
 
