@@ -13,7 +13,7 @@ st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide")
 st.title("🗺️ Roteirizador Multimodal SPTrans")
 
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
-CHAVE_GOOGLE = 'COLOQUE_A_SUA_CHAVE_DO_GOOGLE_AQUI' # <-- SUA CHAVE AQUI
+CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' # <-- SUA CHAVE AQUI
 
 gmaps = googlemaps.Client(key=CHAVE_GOOGLE)
 
