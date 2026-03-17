@@ -6,9 +6,9 @@ import json
 import gzip
 from streamlit_geolocation import streamlit_geolocation
 import googlemaps
-import polyline # <-- A NOVA BIBLIOTECA QUE DESENHA AS RUAS
+import polyline
 
-st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide") # Mudei para wide para ter mais espaço
+st.set_page_config(page_title="Monitor SPTrans - Gilson", layout="wide")
 
 st.title("🗺️ Roteirizador Multimodal SPTrans")
 
@@ -27,36 +27,58 @@ def carregar_gtfs():
         return {}
 trajetos_sp = carregar_gtfs()
 
-col1, col2 = st.columns([1, 2]) # Divide a tela para ficar mais elegante
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.write("📍 **1. Onde estou agora?**")
+    # --- 1. A NOVA LÓGICA DE ORIGEM (GPS ou TEXTO) ---
+    st.write("📍 **1. De onde você vai sair?**")
+    
+    # O botão de GPS continua disponível
     localizacao = streamlit_geolocation()
     
+    # O novo campo para digitar o endereço
+    origem_digitada = st.text_input("Ou digite o endereço de partida:", placeholder="Ex: Terminal Bandeira ou UNESP")
+    
+    st.write("🎯 **2. Para onde quer ir?**")
+    destino = st.text_input("Destino:", placeholder="Ex: Avenida Paulista, 1000")
+    
+    # Variáveis padrão
+    origem_final = None
     minha_lat, minha_lon = -23.6331, -46.7028
     zoom_mapa = 13
     
-    if localizacao and localizacao.get('latitude'):
+    # O CÉREBRO DA ORIGEM: Decide se usa o texto ou o GPS
+    if origem_digitada:
+        origem_final = origem_digitada
+        # Pede pro Google converter o texto em coordenadas para centrar o mapa certinho
+        try:
+            geo = gmaps.geocode(origem_digitada)
+            if geo:
+                minha_lat = geo[0]['geometry']['location']['lat']
+                minha_lon = geo[0]['geometry']['location']['lng']
+                zoom_mapa = 15
+        except:
+            pass
+    elif localizacao and localizacao.get('latitude'):
         minha_lat = localizacao['latitude']
         minha_lon = localizacao['longitude']
+        origem_final = (minha_lat, minha_lon)
         zoom_mapa = 15
-        st.success("GPS Ativo!")
-    
-    st.write("🎯 **2. Para onde quer ir?**")
-    destino = st.text_input("Ex: Avenida Paulista, 1000")
+        st.success("📍 GPS Ativo!")
     
     rota_selecionada = None
     linhas_para_buscar = []
 
-    if destino and localizacao and localizacao.get('latitude'):
+    # --- 2. O ROTEIRIZADOR ---
+    if origem_final and destino:
         with st.spinner("Analisando as melhores rotas..."):
             try:
-                rotas = gmaps.directions((minha_lat, minha_lon), destino, mode="transit", region="br", alternatives=True)
+                # Agora ele manda a origem_final (que pode ser texto ou GPS) pro Google
+                rotas = gmaps.directions(origem_final, destino, mode="transit", region="br", alternatives=True)
                 
                 if rotas:
                     opcoes_rotas = {}
                     
-                    # Analisa todas as rotas e monta o visual (Ex: 🚶 Andar -> 🚌 7550 -> 🚶 Andar)
                     for i, rota in enumerate(rotas):
                         passos = rota['legs'][0]['steps']
                         resumo = []
@@ -88,45 +110,38 @@ with col1:
             except Exception as e:
                 st.error(f"Erro no Google: {e}")
 
-# --- DESENHANDO O MAPA ---
+# --- 3. DESENHANDO O MAPA ---
 with col2:
     m = folium.Map(location=[minha_lat, minha_lon], zoom_start=zoom_mapa, tiles='CartoDB positron')
     
-    if localizacao and localizacao.get('latitude'):
-        folium.Marker([minha_lat, minha_lon], popup="Você está aqui", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m)
+    # Coloca o marcador verde na origem (seja do GPS ou do endereço digitado)
+    if origem_final:
+        folium.Marker([minha_lat, minha_lon], popup="Origem", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m)
 
     session = requests.Session()
     session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
 
-    # SE O USUÁRIO ESCOLHEU UMA ROTA DO GOOGLE:
     if rota_selecionada:
         passos = rota_selecionada['legs'][0]['steps']
         
-        # 1. Desenha cada passo do trajeto
         for passo in passos:
-            # O Google manda o desenho perfeito da rua criptografado. A polyline descriptografa!
             linha_codificada = passo['polyline']['points']
             coordenadas = polyline.decode(linha_codificada)
             
             if passo['travel_mode'] == 'WALKING':
-                # Linha cinza tracejada para caminhada
                 folium.PolyLine(coordenadas, color="gray", weight=4, dash_array='10', tooltip="Caminhada").add_to(m)
             elif passo['travel_mode'] == 'TRANSIT':
                 if passo['transit_details']['line']['vehicle']['type'] == 'BUS':
-                    # Linha vermelha para ônibus
                     folium.PolyLine(coordenadas, color="#FF0000", weight=5, tooltip=f"Ônibus {passo['transit_details']['line']['short_name']}").add_to(m)
                 else:
-                    # Linha roxa para Metrô/Trem
                     folium.PolyLine(coordenadas, color="purple", weight=5, tooltip="Metrô/Trem").add_to(m)
 
-        # 2. Busca os ônibus na SPTrans para TODAS as linhas da rota
         onibus_encontrados = 0
         for linha_nome in linhas_para_buscar:
             numero = linha_nome.split('-')[0]
             linhas_sptrans = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={numero}").json()
             
             if linhas_sptrans:
-                # Busca nas duas direções da linha para garantir que você veja os ônibus chegando
                 for l in linhas_sptrans:
                     frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l['cl']}").json()
                     if frota and 'vs' in frota:
@@ -139,9 +154,8 @@ with col2:
                             ).add_to(m)
         
         if onibus_encontrados > 0:
-            st.success(f"🚌 Rota ativa! {onibus_encontrados} ônibus dessas linhas monitorados em tempo real.")
+            st.success(f"🚌 Rota ativa! {onibus_encontrados} ônibus monitorados em tempo real.")
 
-    # SE NÃO TEM ROTA, USA A BUSCA MANUAL CLÁSSICA:
     else:
         st.write("Ou faça a busca manual de uma linha:")
         linha_busca = st.text_input("Digite a linha (ex: 7550):")
@@ -152,12 +166,10 @@ with col2:
                 escolha = st.selectbox("Escolha o sentido:", list(opcoes.keys()))
                 l_sel = opcoes[escolha]
                 
-                # Desenha rua do GTFS
                 chave = f"{l_sel.get('lt')}-{l_sel.get('tl')}-{l_sel.get('sl')}"
                 if chave in trajetos_sp:
                     folium.PolyLine(trajetos_sp[chave], color="red", weight=4).add_to(m)
                 
-                # Pega frota
                 frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
                 if frota and 'vs' in frota:
                     for v in frota['vs']:
