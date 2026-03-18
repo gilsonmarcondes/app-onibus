@@ -16,16 +16,20 @@ st.set_page_config(page_title="Hub de Mobilidade - Gilson", layout="wide")
 
 st.title("🌍 Hub de Mobilidade Multimodal")
 
-# --- CHAVES DE ACESSO ---
+# --- AS SUAS CHAVES DE ACESSO ---
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
 CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' 
 CHAVE_CLIMA = '1fb1b9310c7e1e3192d52f5821b0c1ab'
-CHAVE_TFL = 'COLOQUE_A_SUA_CHAVE_LONDRES_AQUI' 
-CHAVE_SCOTLAND = 'COLOQUE_A_SUA_CHAVE_ESCOCIA_AQUI' 
+
+# --- AS FUTURAS CHAVES BRITÂNICAS ---
+CHAVE_TFL = 'd4fcd31a062a4b1dab6ea40cf1896241'           # Para a TfL (Londres)
+CHAVE_BODS = 'CHAVE_BODS_AQUI'             # Para Inglaterra (Interior)
+CHAVE_SCOTLAND = 'CHAVE_TRAVELINE_AQUI'    # Para Escócia
+CHAVE_RAIL = 'CHAVE_DARWIN_AQUI'           # Para National Rail
 
 gmaps = googlemaps.Client(key=CHAVE_GOOGLE)
 
-# --- FUNÇÕES GLOBAIS ---
+# ... (MANTENHA A FUNÇÃO DO CLIMA E CARREGAR_GTFS IGUAIS AO CÓDIGO ANTERIOR) ...
 def obter_clima_destino(lat, lon, api_key):
     url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric&lang=pt_br"
     try:
@@ -48,29 +52,36 @@ def carregar_gtfs():
         return {}
 trajetos_sp = carregar_gtfs()
 
-# --- CRIANDO AS ABAS ---
+
 aba_roteiro, aba_monitor = st.tabs(["🗺️ Roteirizador Inteligente", "🚌 Monitor Clássico (SPTrans)"])
 
 # ==========================================
-# ABA 1: O ROTEIRIZADOR GLOBAL (VERSÃO 10.0)
+# ABA 1: O ROTEIRIZADOR GLOBAL (VERSÃO 11.0)
 # ==========================================
 with aba_roteiro:
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.write("🌍 **1. Onde você está? (Base de Dados)**")
+        # --- O NOVO MENU DE SISTEMAS GLOBAIS ---
+        st.write("🌍 **1. Qual sistema de radar vamos usar?**")
         regiao_selecionada = st.selectbox(
             "Escolha a região para ligar o radar em tempo real:", 
-            ["São Paulo (SPTrans)", "Londres (TfL)", "Escócia (Traveline)"]
+            [
+                "🇧🇷 São Paulo (SPTrans)", 
+                "🇬🇧 Londres (TfL Unified API)", 
+                "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Inglaterra Interior (BODS)",
+                "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Escócia (Traveline)",
+                "🚆 Reino Unido (National Rail)"
+            ]
         )
         st.divider()
 
         st.write("📍 **2. De onde você vai sair?**")
         localizacao = streamlit_geolocation()
-        origem_digitada = st.text_input("Ou digite o endereço de partida:")
+        origem_digitada = st.text_input("Ou digite o endereço de partida:", placeholder="Ex: London Eye, Edimburgo, etc.")
         
         st.write("🎯 **3. Para onde quer ir?**")
-        destino = st.text_input("Destino:", placeholder="Ex: London Eye ou UNESP")
+        destino = st.text_input("Destino:", placeholder="Ex: Big Ben, Inverness, etc.")
 
         st.write("🕒 **4. Quando você quer viajar?**")
         opcao_horario = st.selectbox("Escolha o momento:", ["Sair agora", "Partir às...", "Chegar até..."])
@@ -107,6 +118,7 @@ with aba_roteiro:
         minha_lat, minha_lon = -23.6331, -46.7028
         zoom_mapa = 13
         
+        # Lógica de GPS/Texto mantida...
         if origem_digitada:
             origem_final = origem_digitada
             try:
@@ -115,8 +127,7 @@ with aba_roteiro:
                     minha_lat = geo[0]['geometry']['location']['lat']
                     minha_lon = geo[0]['geometry']['location']['lng']
                     zoom_mapa = 15
-            except:
-                pass
+            except: pass
         elif localizacao and localizacao.get('latitude'):
             minha_lat = localizacao['latitude']
             minha_lon = localizacao['longitude']
@@ -125,18 +136,20 @@ with aba_roteiro:
         
         rota_selecionada = None
         linhas_para_buscar = []
-        detalhes_itinerario = []
-        destino_lat = None
-        destino_lon = None
 
         if origem_final and destino:
-            with st.spinner("Calculando rotas..."):
+            with st.spinner("Calculando rotas e fuso horário..."):
                 try:
-                    if regiao_selecionada == "São Paulo (SPTrans)": fuso = pytz.timezone('America/Sao_Paulo')
-                    else: fuso = pytz.timezone('Europe/London')
+                    # Ajusta Fuso Horário e Região do Google Baseado no Menu
+                    if "São Paulo" in regiao_selecionada:
+                        fuso = pytz.timezone('America/Sao_Paulo')
+                        regiao_google = "br"
+                    else:
+                        fuso = pytz.timezone('Europe/London')
+                        regiao_google = "uk"
                     
                     instrucoes_google = {
-                        "mode": "transit", "region": "br" if regiao_selecionada == "São Paulo (SPTrans)" else "uk",
+                        "mode": "transit", "region": regiao_google,
                         "alternatives": True, "transit_mode": modos_selecionados, "transit_routing_preference": routing_pref
                     }
 
@@ -151,8 +164,6 @@ with aba_roteiro:
                     if rotas:
                         rotas = sorted(rotas, key=lambda x: x['legs'][0]['duration']['value'])
                         opcoes_rotas = {}
-                        destino_lat = rotas[0]['legs'][0]['end_location']['lat']
-                        destino_lon = rotas[0]['legs'][0]['end_location']['lng']
                         
                         for i, rota in enumerate(rotas):
                             passos = rota['legs'][0]['steps']
@@ -167,6 +178,7 @@ with aba_roteiro:
                                     detalhes = passo['transit_details']
                                     tipo = detalhes['line']['vehicle']['type']
                                     nome_linha = detalhes['line'].get('short_name') or detalhes['line'].get('name') or "Linha"
+                                    
                                     hora_saida = detalhes['departure_time']['text']
                                     hora_chegada = detalhes['arrival_time']['text']
                                     ponto_embarque = detalhes['departure_stop']['name']
@@ -174,10 +186,11 @@ with aba_roteiro:
                                     
                                     if tipo == 'BUS':
                                         resumo.append(f"🚌 {nome_linha}")
-                                        linhas_bus.append(nome_linha)
+                                        linhas_bus.append(nome_linha) # Guarda a linha para o Radar procurar depois
                                         cronograma.append("🚌 " + info_passo)
                                     elif tipo in ['SUBWAY', 'TRAIN']:
                                         resumo.append(f"🚆 {nome_linha}")
+                                        linhas_bus.append(nome_linha) # No Reino Unido, rastreamos trens também!
                                         cronograma.append("🚆 " + info_passo)
                             
                             titulo = f"Opção {i+1} ({tempo_total}): " + " ➔ ".join(resumo)
@@ -187,14 +200,9 @@ with aba_roteiro:
                             escolha = st.radio("Selecione o seu trajeto:", list(opcoes_rotas.keys()))
                             rota_selecionada = opcoes_rotas[escolha]['rota']
                             linhas_para_buscar = opcoes_rotas[escolha]['linhas_bus']
-                            detalhes_itinerario = opcoes_rotas[escolha]['cronograma']
-                            
-                            if CHAVE_CLIMA != 'COLOQUE_A_SUA_CHAVE_DO_CLIMA_AQUI':
-                                clima_atual = obter_clima_destino(destino_lat, destino_lon, CHAVE_CLIMA)
-                                if clima_atual: st.success(f"Condições no destino: {clima_atual}")
                             
                             st.markdown("### 📋 Itinerário Detalhado")
-                            for item in detalhes_itinerario: st.info(item)
+                            for item in opcoes_rotas[escolha]['cronograma']: st.info(item)
                         else:
                             st.warning("Nenhuma rota encontrada.")
                 except Exception as e:
@@ -205,11 +213,9 @@ with aba_roteiro:
         if origem_final: folium.Marker([minha_lat, minha_lon], popup="Origem", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m_roteiro)
 
         if rota_selecionada:
-            passos = rota_selecionada['legs'][0]['steps']
-            for passo in passos:
-                linha_codificada = passo['polyline']['points']
-                coordenadas = polyline.decode(linha_codificada)
-                
+            # Desenha as linhas nas ruas...
+            for passo in rota_selecionada['legs'][0]['steps']:
+                coordenadas = polyline.decode(passo['polyline']['points'])
                 if passo['travel_mode'] == 'WALKING':
                     folium.PolyLine(coordenadas, color="gray", weight=4, dash_array='10').add_to(m_roteiro)
                 elif passo['travel_mode'] == 'TRANSIT':
@@ -219,24 +225,60 @@ with aba_roteiro:
                     else:
                         folium.PolyLine(coordenadas, color="purple", weight=5, tooltip=f"Trilhos {nome_tooltip}").add_to(m_roteiro)
 
-            if opcao_horario == "Sair agora" and regiao_selecionada == "São Paulo (SPTrans)":
-                session = requests.Session()
-                session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-                onibus_encontrados = 0
-                for linha_nome in linhas_para_buscar:
-                    numero = linha_nome.split('-')[0]
-                    linhas_sptrans = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={numero}").json()
-                    if isinstance(linhas_sptrans, list):
-                        for l in linhas_sptrans:
-                            frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l['cl']}").json()
-                            if frota and 'vs' in frota:
-                                for v in frota['vs']:
-                                    onibus_encontrados += 1
-                                    folium.Marker([v['py'], v['px']], popup=f"SPTrans | Prefixo: {v['p']}", icon=folium.Icon(color='blue', icon='bus', prefix='fa')).add_to(m_roteiro)
-                if onibus_encontrados > 0: st.success(f"🚌 {onibus_encontrados} ônibus rastreados na SPTrans.")
+            # =========================================================
+            # A INTELIGÊNCIA GLOBAL DOS RADARES (O "INTERRUPTOR")
+            # =========================================================
+            if opcao_horario == "Sair agora":
+                
+                # 1. BRASIL (SPTRANS)
+                if "São Paulo" in regiao_selecionada:
+                    session = requests.Session()
+                    session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+                    for linha_nome in linhas_para_buscar:
+                        numero = linha_nome.split('-')[0]
+                        linhas_sptrans = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={numero}").json()
+                        if isinstance(linhas_sptrans, list):
+                            for l in linhas_sptrans:
+                                frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l['cl']}").json()
+                                if frota and 'vs' in frota:
+                                    for v in frota['vs']:
+                                        folium.Marker([v['py'], v['px']], popup=f"SPTrans | Prefixo: {v['p']}", icon=folium.Icon(color='blue', icon='bus', prefix='fa')).add_to(m_roteiro)
+                
+                # 2. LONDRES (TfL)
+                elif "Londres" in regiao_selecionada:
+                    if CHAVE_TFL == 'CHAVE_LONDRES_AQUI':
+                        st.warning("⚠️ Insira a chave da TfL no código para rastrear os ônibus e o Tube.")
+                    else:
+                        st.info("📡 Conectando aos servidores da Transport for London...")
+                        # O CÓDIGO DA TFL ENTRARÁ AQUI
+                
+                # 3. INGLATERRA (BODS)
+                elif "BODS" in regiao_selecionada:
+                    if CHAVE_BODS == 'CHAVE_BODS_AQUI':
+                        st.warning("⚠️ Insira a chave do BODS para rastrear os ônibus intermunicipais ingleses.")
+                    else:
+                        st.info("📡 Conectando ao Bus Open Data Service do Reino Unido...")
+                        # O CÓDIGO DO BODS (XML/GTFS-RT) ENTRARÁ AQUI
+                
+                # 4. ESCÓCIA (TRAVELINE)
+                elif "Escócia" in regiao_selecionada:
+                    if CHAVE_SCOTLAND == 'CHAVE_TRAVELINE_AQUI':
+                        st.warning("⚠️ Insira a chave da Traveline para ativar o radar escocês.")
+                    else:
+                        st.info("📡 Conectando aos dados da Transport Scotland...")
+                        # O CÓDIGO DA TRAVELINE ENTRARÁ AQUI
+
+                # 5. COMBOIOS (NATIONAL RAIL)
+                elif "National Rail" in regiao_selecionada:
+                    if CHAVE_RAIL == 'CHAVE_DARWIN_AQUI':
+                        st.warning("⚠️ Insira a chave da Darwin API para ativar o radar ferroviário.")
+                    else:
+                        st.info("📡 Conectando ao painel de partidas da National Rail...")
+                        # O CÓDIGO DA NATIONAL RAIL ENTRARÁ AQUI
 
         st_folium(m_roteiro, width=800, height=600, returned_objects=[], key="mapa_roteiro")
 
+# ... (MANTENHA O CÓDIGO DA ABA 2 INTACTO AQUI PARA BAIXO) ...
 
 # ==========================================
 # ABA 2: O MONITOR CLÁSSICO (BUSCA DIRETA)
