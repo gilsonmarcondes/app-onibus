@@ -13,9 +13,9 @@ from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET # <-- Nova biblioteca para ler os dados dos trens britânicos
 
 # --- CONFIGURAÇÃO INICIAL ---
-st.set_page_config(page_title="Hub de Mobilidade - Gilson", layout="wide")
+st.set_page_config(page_title="Hub de Mobilidade - D23", layout="wide")
 
-st.title("🌍 Hub de Mobilidade Multimodal")
+st.title("🌍 d23 Multimodal")
 
 # --- AS SUAS CHAVES DE ACESSO ---
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
