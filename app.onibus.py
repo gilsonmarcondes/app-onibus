@@ -10,12 +10,40 @@ import polyline
 from datetime import datetime
 import pytz
 from streamlit_autorefresh import st_autorefresh
-import xml.etree.ElementTree as ET # <-- Nova biblioteca para ler os dados dos trens britânicos
+import xml.etree.ElementTree as ET 
 
 # --- CONFIGURAÇÃO INICIAL ---
-st.set_page_config(page_title="Hub de Mobilidade - D23", layout="wide")
+st.set_page_config(page_title="Hub de Mobilidade - Gilson", layout="wide")
 
-st.title("🌍 d23 Multimodal")
+# --- O BANHO DE LOJA (INJEÇÃO DE CSS) ---
+st.markdown("""
+    <style>
+    /* Ocultar as marcas do Streamlit */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Estilizar os botões principais */
+    div.stButton > button:first-child {
+        background-color: #1E1E1E;
+        color: white;
+        border-radius: 8px;
+        border: 1px solid #333333;
+        padding: 10px 24px;
+        font-weight: bold;
+        transition: all 0.3s ease;
+        width: 100%;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #0066cc; /* Azul vibrante ao passar o mouse */
+        border-color: #0066cc;
+        color: white;
+        transform: translateY(-2px); /* Pequeno efeito de elevação */
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🌍 Hub de Mobilidade Multimodal")
 
 # --- AS SUAS CHAVES DE ACESSO ---
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
@@ -24,9 +52,9 @@ CHAVE_CLIMA = '1fb1b9310c7e1e3192d52f5821b0c1ab'
 
 # --- AS CHAVES INTERNACIONAIS ---
 CHAVE_TFL = 'd4fcd31a062a4b1dab6ea40cf1896241'           
-CHAVE_BODS = '76765b7adeb5b7e231139229df66db24b94a12d7'                           
+CHAVE_BODS = '76765b7adeb5b7e231139229df66db24b94a12d7' # <-- Sua chave do interior da Inglaterra
 CHAVE_SCOTLAND = 'CHAVE_TRAVELINE_AQUI'                  
-CHAVE_RAIL = 'CHAVE_DARWIN_AQUI' # <-- Cole a sua chave da National Rail aqui
+CHAVE_RAIL = 'CHAVE_DARWIN_AQUI' 
 
 gmaps = googlemaps.Client(key=CHAVE_GOOGLE)
 
@@ -74,7 +102,7 @@ with aba_roteiro:
         )
         st.divider()
 
-        # --- OS BOTÕES DE ACESSO RÁPIDO ---
+        # --- OS BOTÕES DE ACESSO RÁPIDO (AGORA ESTILIZADOS) ---
         st.write("🌟 **Rotas Favoritas (Acesso Rápido)**")
         col_btn1, col_btn2 = st.columns(2)
         
@@ -229,7 +257,6 @@ with aba_roteiro:
     with col2:
         # --- MODO ESCURO DINÂMICO ---
         try:
-            # Pega a hora baseado na região (SP ou Londres)
             if "São Paulo" in regiao_selecionada:
                 fuso_mapa = pytz.timezone('America/Sao_Paulo')
             else:
@@ -307,8 +334,43 @@ with aba_roteiro:
                         if veiculos_encontrados == 0:
                             st.warning("A TfL não reportou veículos próximos para esta rota neste exato momento.")
 
+                # 3. INGLATERRA (BODS) - Tradutor de XML (SIRI-VM)
                 elif "BODS" in regiao_selecionada:
-                    st.warning("⚠️ Insira a chave do BODS para rastrear os autocarros intermunicipais.")
+                    if CHAVE_BODS == 'COLOQUE_A_SUA_CHAVE_DO_BODS_AQUI':
+                        st.warning("⚠️ Insira a chave do BODS no código para rastrear os autocarros intermunicipais ingleses.")
+                    else:
+                        st.info("📡 A ligar ao Bus Open Data Service (BODS)...")
+                        veiculos_encontrados = 0
+                        
+                        for linha_nome in linhas_para_buscar:
+                            try:
+                                url_bods = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/?api_key={CHAVE_BODS}&lineRef={linha_nome}"
+                                resposta_bods = requests.get(url_bods)
+                                
+                                if resposta_bods.status_code == 200:
+                                    root = ET.fromstring(resposta_bods.content)
+                                    namespaces = {'siri': 'http://www.siri.org.uk/siri'}
+                                    veiculos = root.findall('.//siri:VehicleActivity', namespaces)
+                                    
+                                    for v in veiculos:
+                                        lat = v.find('.//siri:Latitude', namespaces).text
+                                        lon = v.find('.//siri:Longitude', namespaces).text
+                                        ref = v.find('.//siri:VehicleRef', namespaces).text
+                                        
+                                        folium.Marker(
+                                            [float(lat), float(lon)], 
+                                            popup=f"BODS | Veículo: {ref}", 
+                                            icon=folium.Icon(color='orange', icon='bus', prefix='fa')
+                                        ).add_to(m_roteiro)
+                                        veiculos_encontrados += 1
+                            except Exception as e:
+                                pass
+                                
+                        if veiculos_encontrados > 0:
+                            st.success(f"🚌 {veiculos_encontrados} ônibus rastreados no interior da Inglaterra.")
+                        else:
+                            st.warning("Nenhum ônibus desta linha reportado pelo BODS no radar agora.")
+
                 elif "Escócia" in regiao_selecionada:
                     st.warning("⚠️ Insira a chave da Traveline para ativar o radar escocês.")
                 
@@ -319,7 +381,6 @@ with aba_roteiro:
                     else:
                         st.info("📡 A ligar ao painel central da National Rail...")
                         
-                        # Dicionário de Códigos de Estação (CRS) 
                         dicionario_crs = {
                             "kings cross": "KGX", "edinburgh": "EDB", "inverness": "INV",
                             "euston": "EUS", "victoria": "VIC", "waterloo": "WAT", 
@@ -425,7 +486,6 @@ with aba_monitor:
             else:
                 st.warning("Nenhum ônibus desta linha operando neste sentido agora.")
 
-            # Modo Escuro no Monitor Clássico também
             try:
                 hora_atual = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
                 tema_mapa_classico = 'CartoDB dark_matter' if (hora_atual >= 18 or hora_atual < 6) else 'CartoDB positron'
