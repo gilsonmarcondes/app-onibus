@@ -10,6 +10,7 @@ import polyline
 from datetime import datetime
 import pytz
 from streamlit_autorefresh import st_autorefresh
+import xml.etree.ElementTree as ET # <-- Nova biblioteca para ler os dados dos trens britânicos
 
 # --- CONFIGURAÇÃO INICIAL ---
 st.set_page_config(page_title="Hub de Mobilidade - Gilson", layout="wide")
@@ -20,10 +21,12 @@ st.title("🌍 Hub de Mobilidade Multimodal")
 TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
 CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' 
 CHAVE_CLIMA = '1fb1b9310c7e1e3192d52f5821b0c1ab'
+
+# --- AS CHAVES INTERNACIONAIS ---
 CHAVE_TFL = 'd4fcd31a062a4b1dab6ea40cf1896241'           
-CHAVE_BODS = 'CHAVE_BODS_AQUI'                           
+CHAVE_BODS = '76765b7adeb5b7e231139229df66db24b94a12d7'                           
 CHAVE_SCOTLAND = 'CHAVE_TRAVELINE_AQUI'                  
-CHAVE_RAIL = 'CHAVE_DARWIN_AQUI'                          
+CHAVE_RAIL = 'CHAVE_DARWIN_AQUI' # <-- Cole a sua chave da National Rail aqui
 
 gmaps = googlemaps.Client(key=CHAVE_GOOGLE)
 
@@ -78,7 +81,7 @@ with aba_roteiro:
         if col_btn1.button("🎓 Ir para UNESP"):
             st.session_state.memoria_origem = "SEU ENDERECO DE CASA AQUI, Sao Paulo"
             st.session_state.memoria_destino = "UNESP, Sao Paulo"
-            st.rerun() # Faz a tela piscar rápido para atualizar os campos
+            st.rerun()
 
         if col_btn2.button("🏠 Voltar para Casa"):
             st.session_state.memoria_origem = "UNESP, Sao Paulo"
@@ -88,7 +91,6 @@ with aba_roteiro:
 
         st.write("📍 **2. De onde você vai sair?**")
         localizacao = streamlit_geolocation()
-        # Aqui o campo de texto lê a memória do aplicativo
         origem_digitada = st.text_input("Ou digite o endereço de partida:", key="memoria_origem", placeholder="Ex: London Eye, Ibis Kensington...")
         
         st.write("🎯 **3. Para onde quer ir?**")
@@ -225,7 +227,24 @@ with aba_roteiro:
                     st.error(f"Erro na busca: {e}")
 
     with col2:
-        m_roteiro = folium.Map(location=[minha_lat, minha_lon], zoom_start=zoom_mapa, tiles='CartoDB positron')
+        # --- MODO ESCURO DINÂMICO ---
+        try:
+            # Pega a hora baseado na região (SP ou Londres)
+            if "São Paulo" in regiao_selecionada:
+                fuso_mapa = pytz.timezone('America/Sao_Paulo')
+            else:
+                fuso_mapa = pytz.timezone('Europe/London')
+                
+            hora_atual = datetime.now(fuso_mapa).hour
+            if hora_atual >= 18 or hora_atual < 6:
+                tema_mapa = 'CartoDB dark_matter'
+            else:
+                tema_mapa = 'CartoDB positron'
+        except:
+            tema_mapa = 'CartoDB positron'
+
+        m_roteiro = folium.Map(location=[minha_lat, minha_lon], zoom_start=zoom_mapa, tiles=tema_mapa)
+        
         if origem_final: folium.Marker([minha_lat, minha_lon], popup="Origem", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m_roteiro)
 
         if rota_selecionada:
@@ -292,8 +311,75 @@ with aba_roteiro:
                     st.warning("⚠️ Insira a chave do BODS para rastrear os autocarros intermunicipais.")
                 elif "Escócia" in regiao_selecionada:
                     st.warning("⚠️ Insira a chave da Traveline para ativar o radar escocês.")
+                
+                # 5. COMBOIOS (NATIONAL RAIL) - O Painel das Estações (SOAP XML)
                 elif "National Rail" in regiao_selecionada:
-                    st.warning("⚠️ Insira a chave da Darwin API para ativar o radar ferroviário.")
+                    if CHAVE_RAIL == 'CHAVE_DARWIN_AQUI':
+                        st.warning("⚠️ Insira a chave da Darwin API (Token) no código para ativar o radar ferroviário.")
+                    else:
+                        st.info("📡 A ligar ao painel central da National Rail...")
+                        
+                        # Dicionário de Códigos de Estação (CRS) 
+                        dicionario_crs = {
+                            "kings cross": "KGX", "edinburgh": "EDB", "inverness": "INV",
+                            "euston": "EUS", "victoria": "VIC", "waterloo": "WAT", 
+                            "paddington": "PAD", "st pancras": "STP"
+                        }
+                        
+                        origem_limpa = origem_digitada.lower().replace("'", "").replace("london ", "")
+                        codigo_estacao = None
+                        
+                        for nome_estacao, crs in dicionario_crs.items():
+                            if nome_estacao in origem_limpa:
+                                codigo_estacao = crs
+                                break
+                                
+                        if codigo_estacao:
+                            st.markdown(f"### 🚆 Painel de Partidas: {codigo_estacao.upper()}")
+                            
+                            xml_request = f"""<?xml version="1.0"?>
+                            <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns1="http://thalesgroup.com/RTTI/2017-10-01/ldb/" xmlns:ns2="http://thalesgroup.com/RTTI/2013-11-28/Token/types">
+                              <SOAP-ENV:Header>
+                                <ns2:AccessToken>
+                                  <ns2:TokenValue>{CHAVE_RAIL}</ns2:TokenValue>
+                                </ns2:AccessToken>
+                              </SOAP-ENV:Header>
+                              <SOAP-ENV:Body>
+                                <ns1:GetDepartureBoardRequest>
+                                  <ns1:numRows>5</ns1:numRows>
+                                  <ns1:crs>{codigo_estacao}</ns1:crs>
+                                </ns1:GetDepartureBoardRequest>
+                              </SOAP-ENV:Body>
+                            </SOAP-ENV:Envelope>"""
+                            
+                            headers = {'Content-Type': 'text/xml'}
+                            url_darwin = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx"
+                            
+                            try:
+                                resposta_rail = requests.post(url_darwin, data=xml_request, headers=headers)
+                                
+                                if resposta_rail.status_code == 200:
+                                    root = ET.fromstring(resposta_rail.content)
+                                    namespaces = {'lt7': 'http://thalesgroup.com/RTTI/2017-10-01/ldb/types'}
+                                    servicos = root.findall('.//lt7:trainServices/lt7:service', namespaces)
+                                    
+                                    if servicos:
+                                        for trem in servicos:
+                                            destino_trem = trem.find('lt7:destination/lt7:location/lt7:locationName', namespaces).text
+                                            hora_oficial = trem.find('lt7:std', namespaces).text
+                                            hora_estimada = trem.find('lt7:etd', namespaces).text
+                                            plataforma = trem.find('lt7:platform', namespaces)
+                                            plat_texto = plataforma.text if plataforma is not None else "Aguarde..."
+                                            
+                                            status = "✅ No Horário" if hora_estimada == "On time" else f"⚠️ Atrasado para {hora_estimada}"
+                                            
+                                            st.info(f"🕒 **{hora_oficial}** ➔ **{destino_trem}** | Plataforma: **{plat_texto}** | {status}")
+                                    else:
+                                        st.warning("Nenhum trem programado para as próximas horas nesta estação.")
+                            except Exception as e:
+                                st.error(f"Erro ao ler os dados da National Rail: {e}")
+                        else:
+                            st.warning("Para ver o painel ao vivo, digite uma estação principal na origem (ex: King's Cross, Edinburgh, Inverness, Paddington).")
 
 # ==========================================
 # ABA 2: O MONITOR CLÁSSICO (BUSCA DIRETA)
@@ -339,7 +425,14 @@ with aba_monitor:
             else:
                 st.warning("Nenhum ônibus desta linha operando neste sentido agora.")
 
-            m_manual = folium.Map(location=[-23.5505, -46.6333], zoom_start=12, tiles='CartoDB positron')
+            # Modo Escuro no Monitor Clássico também
+            try:
+                hora_atual = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
+                tema_mapa_classico = 'CartoDB dark_matter' if (hora_atual >= 18 or hora_atual < 6) else 'CartoDB positron'
+            except:
+                tema_mapa_classico = 'CartoDB positron'
+
+            m_manual = folium.Map(location=[-23.5505, -46.6333], zoom_start=12, tiles=tema_mapa_classico)
 
             chave_gtfs = f"{linha_sel.get('lt')}-{linha_sel.get('tl')}-{linha_sel.get('sl')}"
             if chave_gtfs in trajetos_sp:
