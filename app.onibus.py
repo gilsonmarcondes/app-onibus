@@ -86,7 +86,7 @@ if 'memoria_origem' not in st.session_state:
 if 'memoria_destino' not in st.session_state:
     st.session_state.memoria_destino = ""
 
-aba_roteiro, aba_monitor = st.tabs(["🗺️ Roteirizador Inteligente", "🚌 Monitor Clássico (SPTrans)"])
+aba_roteiro, aba_monitor, aba_ponto = st.tabs(["🗺️ Roteirizador Inteligente", "🚌 Monitor Clássico", "🚏 Painel do Ponto"])
 
 # ==========================================
 # ABA 1: O ROTEIRIZADOR GLOBAL
