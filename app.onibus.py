@@ -514,5 +514,3 @@ with aba_monitor:
         else:
             st.error("Linha não encontrada na base da SPTrans.")
 
-
-AMÉRICO BRASILIENSE C/B (Endereço: LADO ESQUERDO DA PISTA) - ID: 7203285
