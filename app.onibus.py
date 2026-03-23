@@ -617,7 +617,7 @@ with aba_ponto:
                 
                 if paradas_da_linha:
                     st.success(f"Encontramos {len(paradas_da_linha)} paradas no trajeto dessa linha!")
-                    opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas_da_linha}
+                    opcoes_paradas = {f"{p['np']} (Endereço: {p.get('ed', '')}) - ID: {p['cp']}": p['cp'] for p in paradas_da_linha}
                     escolha_parada = st.selectbox("Escolha em qual ponto você está esperando:", list(opcoes_paradas.keys()))
                     codigo_da_parada = opcoes_paradas[escolha_parada]
                     nome_exibicao = escolha_parada.split('(')[0]
