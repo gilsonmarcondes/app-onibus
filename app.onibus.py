@@ -513,3 +513,62 @@ with aba_monitor:
                     st.rerun()
         else:
             st.error("Linha não encontrada na base da SPTrans.")
+
+
+# ==========================================
+# ABA 3: PAINEL DO PONTO (LETREIRO DIGITAL)
+# ==========================================
+with aba_ponto:
+    st.subheader("🚏 Painel de Chegadas do Ponto")
+    st.write("Descubra quais ônibus estão chegando exatamente onde você está de pé.")
+    
+    col_ponto1, col_ponto2 = st.columns([8, 2])
+    busca_ponto = col_ponto1.text_input("Nome da rua, corredor ou ponto (ex: Sabesp, Ibirapuera, Nove de Julho):")
+    auto_refresh_ponto = col_ponto2.checkbox("🔄 Radar (30s)", value=False, key="refresh_ponto")
+    
+    if auto_refresh_ponto:
+        st_autorefresh(interval=30000, limit=None, key="radar_paradas")
+
+    if busca_ponto:
+        session = requests.Session()
+        session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+        
+        # 1. Buscar a lista de paradas com esse nome
+        paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={busca_ponto}").json()
+        
+        if paradas:
+            opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
+            
+            # 2. Deixar você escolher exatamente em qual ponto está (Parada 1, Parada 2, etc.)
+            escolha_parada = st.selectbox("Selecione a parada exata:", list(opcoes_paradas.keys()))
+            codigo_da_parada = opcoes_paradas[escolha_parada]
+            
+            st.divider()
+            st.markdown(f"### 🚥 Próximas Chegadas em: {escolha_parada.split('(')[0]}")
+            
+            # 3. Puxar as previsões de todos os ônibus chegando APENAS nesta parada
+            previsao_url = f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={codigo_da_parada}"
+            dados_previsao = session.get(previsao_url).json()
+            
+            if dados_previsao and 'p' in dados_previsao and 'l' in dados_previsao['p']:
+                linhas_chegando = dados_previsao['p']['l']
+                
+                # Criar uma lista para organizar os ônibus do mais rápido pro mais demorado
+                painel = []
+                for linha in linhas_chegando:
+                    letreiro = f"{linha['c']} - {linha['lt0']} ➔ {linha['ds']}"
+                    for veiculo in linha['vs']:
+                        # t = horário previsto de chegada
+                        painel.append({"linha": letreiro, "hora_chegada": veiculo['t'], "prefixo": veiculo['p']})
+                
+                # Ordenar cronologicamente
+                painel = sorted(painel, key=lambda x: x['hora_chegada'])
+                
+                # Exibir os "Cards" elegantes na tela
+                for item in painel:
+                    st.info(f"🕒 **{item['hora_chegada']}** | 🚌 **{item['linha']}** (Carro: {item['prefixo']})")
+                    
+            else:
+                st.warning("Não há nenhum ônibus no radar com previsão de chegada para este ponto específico nos próximos minutos.")
+        else:
+            st.error("Nenhum ponto encontrado com esse nome. Tente uma avenida ou nome mais geral.")
