@@ -89,359 +89,62 @@ if 'memoria_destino' not in st.session_state:
 aba_roteiro, aba_monitor, aba_ponto = st.tabs(["🗺️ Roteirizador Inteligente", "🚌 Monitor Clássico", "🚏 Painel do Ponto"])
 
 # ==========================================
-# ABA 1: O ROTEIRIZADOR GLOBAL
+# ABA 1: PLANEJADOR DE ROTAS (SIMPLIFICADA)
 # ==========================================
-with aba_roteiro:
-    col1, col2 = st.columns([1, 2])
-
-    with col1:
-        st.write("🌍 **1. Qual sistema de radar vamos usar?**")
-        regiao_selecionada = st.selectbox(
-            "Escolha a região para ligar o radar em tempo real:", 
-            ["🇧🇷 São Paulo (SPTrans)", "🇬🇧 Londres (TfL Unified API)", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Inglaterra Interior (BODS)", "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Escócia (Traveline)", "🚆 Reino Unido (National Rail)"]
-        )
-        st.divider()
-
-        # --- OS BOTÕES DE ACESSO RÁPIDO (AGORA ESTILIZADOS) ---
-        st.write("🌟 **Rotas Favoritas (Acesso Rápido)**")
-        col_btn1, col_btn2 = st.columns(2)
+with aba_rota:
+    st.subheader("🗺️ Traçar Nova Rota")
+    st.write("Digite os endereços para planejar sua viagem com o Google Maps.")
+    
+    # --- INTERFACE LIMPA ---
+    col_origem, col_destino = st.columns(2)
+    with col_origem:
+        origem = st.text_input("📍 Origem:", placeholder="Ex: Av. Paulista, 1500 ou 'Onde estou'")
+    with col_destino:
+        destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera")
         
-        if col_btn1.button("🎓 Ir para UNESP"):
-            st.session_state.memoria_origem = "SEU ENDERECO DE CASA AQUI, Sao Paulo"
-            st.session_state.memoria_destino = "UNESP, Sao Paulo"
-            st.rerun()
-
-        if col_btn2.button("🏠 Voltar para Casa"):
-            st.session_state.memoria_origem = "UNESP, Sao Paulo"
-            st.session_state.memoria_destino = "SEU ENDERECO DE CASA AQUI, Sao Paulo"
-            st.rerun()
-        st.divider()
-
-        st.write("📍 **2. De onde você vai sair?**")
-        localizacao = streamlit_geolocation()
-        origem_digitada = st.text_input("Ou digite o endereço de partida:", key="memoria_origem", placeholder="Ex: London Eye, Ibis Kensington...")
-        
-        st.write("🎯 **3. Para onde quer ir?**")
-        destino = st.text_input("Destino:", key="memoria_destino", placeholder="Ex: Big Ben, Inverness...")
-
-        st.write("🕒 **4. Quando você quer viajar?**")
-        opcao_horario = st.selectbox("Escolha o momento:", ["Sair agora", "Partir às...", "Chegar até..."])
-        
-        if opcao_horario == "Sair agora":
-            st_autorefresh(interval=30000, limit=None, key="radar_roteiro")
-            st.caption("⏳ *Radar Automático Ativado (Atualiza a cada 30s)*")
-        
-        data_viagem = None
-        hora_viagem = None
-        
-        if opcao_horario != "Sair agora":
-            cd, ch = st.columns(2)
-            data_viagem = cd.date_input("Data da viagem")
-            hora_viagem = ch.time_input("Hora da viagem")
-        st.divider()
-
-        with st.expander("⚙️ Filtros e Preferências"):
-            c1_f, c2_f, c3_f = st.columns(3)
-            usar_onibus = c1_f.checkbox("🚌 Ônibus", value=True)
-            usar_metro = c2_f.checkbox("🚇 Metrô/Tube", value=True)
-            usar_trem = c3_f.checkbox("🚆 Trem", value=True)
-
-            modos_selecionados = []
-            if usar_onibus: modos_selecionados.append("bus")
-            if usar_metro: modos_selecionados.append("subway")
-            if usar_trem: modos_selecionados.append("train")
-            if not modos_selecionados: modos_selecionados = ["bus", "subway", "train"]
-
-            preferencia = st.radio("Priorizar:", ["⏳ Mais Rápida", "🚶 Menos Caminhada", "🔄 Menos Baldeações"], horizontal=True)
-            routing_pref = "less_walking" if preferencia == "🚶 Menos Caminhada" else "fewer_transfers" if preferencia == "🔄 Menos Baldeações" else None
-        
-        origem_final = None
-        minha_lat, minha_lon = -23.6331, -46.7028
-        zoom_mapa = 13
-        
-        if origem_digitada:
-            origem_final = origem_digitada
-            try:
-                geo = gmaps.geocode(origem_digitada)
-                if geo:
-                    minha_lat = geo[0]['geometry']['location']['lat']
-                    minha_lon = geo[0]['geometry']['location']['lng']
-                    zoom_mapa = 15
-            except: pass
-        elif localizacao and localizacao.get('latitude'):
-            minha_lat = localizacao['latitude']
-            minha_lon = localizacao['longitude']
-            origem_final = (minha_lat, minha_lon)
-            zoom_mapa = 15
-        
-        rota_selecionada = None
-        linhas_para_buscar = []
-
-        if origem_final and destino:
-            with st.spinner("A calcular rotas e fuso horário..."):
-                try:
-                    if "São Paulo" in regiao_selecionada:
-                        fuso = pytz.timezone('America/Sao_Paulo')
-                        regiao_google = "br"
-                    else:
-                        fuso = pytz.timezone('Europe/London')
-                        regiao_google = "uk"
-                    
-                    instrucoes_google = {
-                        "mode": "transit", "region": regiao_google,
-                        "alternatives": True, "transit_mode": modos_selecionados, "transit_routing_preference": routing_pref
-                    }
-
-                    if opcao_horario == "Sair agora": instrucoes_google["departure_time"] = datetime.now(fuso)
-                    else:
-                        dt_escolhida = fuso.localize(datetime.combine(data_viagem, hora_viagem))
-                        if opcao_horario == "Partir às...": instrucoes_google["departure_time"] = dt_escolhida
-                        elif opcao_horario == "Chegar até...": instrucoes_google["arrival_time"] = dt_escolhida
-
-                    rotas = gmaps.directions(origem_final, destino, **instrucoes_google)
-                    
-                    if rotas:
-                        rotas = sorted(rotas, key=lambda x: x['legs'][0]['duration']['value'])
-                        opcoes_rotas = {}
-                        
-                        destino_lat = rotas[0]['legs'][0]['end_location']['lat']
-                        destino_lon = rotas[0]['legs'][0]['end_location']['lng']
-                        
-                        for i, rota in enumerate(rotas):
-                            passos = rota['legs'][0]['steps']
-                            tempo_total = rota['legs'][0]['duration']['text']
-                            resumo, linhas_bus, cronograma = [], [], []
-                            
-                            for passo in passos:
-                                if passo['travel_mode'] == 'WALKING':
-                                    resumo.append("🚶")
-                                    cronograma.append(f"🚶 Caminhada ({passo['duration']['text']})")
-                                elif passo['travel_mode'] == 'TRANSIT':
-                                    detalhes = passo['transit_details']
-                                    tipo = detalhes['line']['vehicle']['type']
-                                    nome_linha = detalhes['line'].get('short_name') or detalhes['line'].get('name') or "Linha"
-                                    
-                                    hora_saida = detalhes['departure_time']['text']
-                                    hora_chegada = detalhes['arrival_time']['text']
-                                    ponto_embarque = detalhes['departure_stop']['name']
-                                    info_passo = f"🕒 **{hora_saida}** - Embarque: **{nome_linha}**\n📍 *Ponto: {ponto_embarque}*\n🕒 **{hora_chegada}** - Desembarque"
-                                    
-                                    if tipo == 'BUS':
-                                        resumo.append(f"🚌 {nome_linha}")
-                                        linhas_bus.append(nome_linha)
-                                        cronograma.append("🚌 " + info_passo)
-                                    elif tipo in ['SUBWAY', 'TRAIN']:
-                                        resumo.append(f"🚆 {nome_linha}")
-                                        linhas_bus.append(nome_linha)
-                                        cronograma.append("🚆 " + info_passo)
-                            
-                            titulo = f"Opção {i+1} ({tempo_total}): " + " ➔ ".join(resumo)
-                            opcoes_rotas[titulo] = {'rota': rota, 'linhas_bus': linhas_bus, 'cronograma': cronograma}
-                        
-                        if opcoes_rotas:
-                            escolha = st.radio("Selecione o seu trajeto:", list(opcoes_rotas.keys()))
-                            rota_selecionada = opcoes_rotas[escolha]['rota']
-                            linhas_para_buscar = opcoes_rotas[escolha]['linhas_bus']
-                            
-                            if CHAVE_CLIMA != 'COLOQUE_A_SUA_CHAVE_DO_CLIMA_AQUI':
-                                clima_atual = obter_clima_destino(destino_lat, destino_lon, CHAVE_CLIMA)
-                                if clima_atual: st.success(f"Condições no destino: {clima_atual}")
-                            
-                            st.markdown("### 📋 Itinerário Detalhado")
-                            for item in opcoes_rotas[escolha]['cronograma']: st.info(item)
-                        else:
-                            st.warning("Nenhuma rota encontrada.")
-                except Exception as e:
-                    st.error(f"Erro na busca: {e}")
-
-    with col2:
-        # --- MODO ESCURO DINÂMICO ---
-        try:
-            if "São Paulo" in regiao_selecionada:
-                fuso_mapa = pytz.timezone('America/Sao_Paulo')
-            else:
-                fuso_mapa = pytz.timezone('Europe/London')
+    st.divider()
+    
+    # --- MOTOR DE BUSCA DE ROTA ---
+    if st.button("Buscar Rota Rápida", type="primary", use_container_width=True):
+        if origem and destino:
+            with st.spinner("Calculando a melhor rota..."):
+                # Fazendo a requisição para o Google Directions API
+                url_directions = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem}&destination={destino}&mode=transit&language=pt-BR&key={CHAVE_GOOGLE}"
+                res_rota = requests.get(url_directions).json()
                 
-            hora_atual = datetime.now(fuso_mapa).hour
-            if hora_atual >= 18 or hora_atual < 6:
-                tema_mapa = 'CartoDB dark_matter'
-            else:
-                tema_mapa = 'CartoDB positron'
-        except:
-            tema_mapa = 'CartoDB positron'
-
-        m_roteiro = folium.Map(location=[minha_lat, minha_lon], zoom_start=zoom_mapa, tiles=tema_mapa)
-        
-        if origem_final: folium.Marker([minha_lat, minha_lon], popup="Origem", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m_roteiro)
-
-        if rota_selecionada:
-            for passo in rota_selecionada['legs'][0]['steps']:
-                coordenadas = polyline.decode(passo['polyline']['points'])
-                if passo['travel_mode'] == 'WALKING':
-                    folium.PolyLine(coordenadas, color="gray", weight=4, dash_array='10').add_to(m_roteiro)
-                elif passo['travel_mode'] == 'TRANSIT':
-                    nome_tooltip = passo['transit_details']['line'].get('short_name') or passo['transit_details']['line'].get('name') or "Linha"
-                    if passo['transit_details']['line']['vehicle']['type'] == 'BUS':
-                        folium.PolyLine(coordenadas, color="#FF0000", weight=5, tooltip=f"Ônibus {nome_tooltip}").add_to(m_roteiro)
-                    else:
-                        folium.PolyLine(coordenadas, color="purple", weight=5, tooltip=f"Trilhos {nome_tooltip}").add_to(m_roteiro)
-
-            st_folium(m_roteiro, width=800, height=500, returned_objects=[], key="mapa_roteiro")
-
-            if opcao_horario == "Sair agora":
-                if "São Paulo" in regiao_selecionada:
-                    session = requests.Session()
-                    session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-                    onibus_encontrados = 0
-                    for linha_nome in linhas_para_buscar:
-                        numero = linha_nome.split('-')[0]
-                        linhas_sptrans = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={numero}").json()
-                        if isinstance(linhas_sptrans, list):
-                            for l in linhas_sptrans:
-                                frota = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l['cl']}").json()
-                                if frota and 'vs' in frota:
-                                    for v in frota['vs']:
-                                        onibus_encontrados += 1
-                                        folium.Marker([v['py'], v['px']], popup=f"SPTrans | Prefixo: {v['p']}", icon=folium.Icon(color='blue', icon='bus', prefix='fa')).add_to(m_roteiro) 
-                    if onibus_encontrados > 0: 
-                        st.success(f"🚌 {onibus_encontrados} ônibus rastreados na SPTrans. Atualize a página para ver no mapa.")
-
-                elif "Londres" in regiao_selecionada:
-                    if CHAVE_TFL == 'COLOQUE_A_SUA_CHAVE_LONDRES_AQUI':
-                        st.warning("⚠️ Insira a chave da TfL no código para ver os painéis de chegada ao vivo.")
-                    else:
-                        st.info("📡 A ligar aos servidores da Transport for London...")
-                        veiculos_encontrados = 0
-                        veiculos_vistos = set()
-                        st.markdown("### 🇬🇧 Painel de Chegadas ao Vivo (TfL)")
-                        for linha_nome in linhas_para_buscar:
-                            linha_id = linha_nome.lower().replace(" line", "").replace(" ", "")
-                            try:
-                                url_tfl = f"https://api.tfl.gov.uk/Line/{linha_id}/Arrivals?app_key={CHAVE_TFL}"
-                                resposta_tfl = requests.get(url_tfl).json()
-                                if isinstance(resposta_tfl, list):
-                                    for previsao in resposta_tfl:
-                                        id_veiculo = previsao.get('vehicleId')
-                                        if id_veiculo and str(id_veiculo) != "00000" and id_veiculo not in veiculos_vistos:
-                                            veiculos_vistos.add(id_veiculo)
-                                            veiculos_encontrados += 1
-                                            estacao = previsao.get('stationName', 'Paragem')
-                                            minutos = previsao.get('timeToStation', 0) // 60
-                                            tempo_texto = "🚨 **A Chegar!**" if minutos == 0 else f"**{minutos} min**"
-                                            st.write(f"🚇 **Linha {linha_nome}**: Chega a *{estacao}* em {tempo_texto}")
-                            except Exception as e:
-                                pass
-                        if veiculos_encontrados == 0:
-                            st.warning("A TfL não reportou veículos próximos para esta rota neste exato momento.")
-
-                # 3. INGLATERRA (BODS) - Tradutor de XML (SIRI-VM)
-                elif "BODS" in regiao_selecionada:
-                    if CHAVE_BODS == 'COLOQUE_A_SUA_CHAVE_DO_BODS_AQUI':
-                        st.warning("⚠️ Insira a chave do BODS no código para rastrear os autocarros intermunicipais ingleses.")
-                    else:
-                        st.info("📡 A ligar ao Bus Open Data Service (BODS)...")
-                        veiculos_encontrados = 0
+                if res_rota['status'] == 'OK':
+                    rota = res_rota['routes'][0]['legs'][0]
+                    
+                    # Informações principais da viagem
+                    tempo_total = rota['duration']['text']
+                    distancia_total = rota['distance']['text']
+                    
+                    st.success(f"✅ Rota encontrada! Tempo estimado: **{tempo_total}** ({distancia_total})")
+                    
+                    st.markdown("### 📝 Passo a passo da viagem:")
+                    
+                    # Detalhando cada etapa da viagem
+                    for passo in rota['steps']:
+                        instrucao = passo['html_instructions']
+                        # Removendo as tags HTML do Google para ficar um texto limpo
+                        instrucao_limpa = instrucao.replace('<b>', '**').replace('</b>', '**').replace('<div style="font-size:0.9em">', ' (').replace('</div>', ')')
                         
-                        for linha_nome in linhas_para_buscar:
-                            try:
-                                url_bods = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/?api_key={CHAVE_BODS}&lineRef={linha_nome}"
-                                resposta_bods = requests.get(url_bods)
-                                
-                                if resposta_bods.status_code == 200:
-                                    root = ET.fromstring(resposta_bods.content)
-                                    namespaces = {'siri': 'http://www.siri.org.uk/siri'}
-                                    veiculos = root.findall('.//siri:VehicleActivity', namespaces)
-                                    
-                                    for v in veiculos:
-                                        lat = v.find('.//siri:Latitude', namespaces).text
-                                        lon = v.find('.//siri:Longitude', namespaces).text
-                                        ref = v.find('.//siri:VehicleRef', namespaces).text
-                                        
-                                        folium.Marker(
-                                            [float(lat), float(lon)], 
-                                            popup=f"BODS | Veículo: {ref}", 
-                                            icon=folium.Icon(color='orange', icon='bus', prefix='fa')
-                                        ).add_to(m_roteiro)
-                                        veiculos_encontrados += 1
-                            except Exception as e:
-                                pass
-                                
-                        if veiculos_encontrados > 0:
-                            st.success(f"🚌 {veiculos_encontrados} ônibus rastreados no interior da Inglaterra.")
+                        modo_viagem = passo['travel_mode']
+                        
+                        if modo_viagem == "TRANSIT":
+                            linha = passo['transit_details']['line']['short_name']
+                            veiculo = passo['transit_details']['line']['vehicle']['name']
+                            st.info(f"🚌 **Pegar {veiculo} (Linha {linha})**: {instrucao_limpa}")
+                            st.caption(f"⏱️ Duração: {passo['duration']['text']} | 🚏 Paradas: {passo['transit_details'].get('num_stops', '?')}")
+                        elif modo_viagem == "WALKING":
+                            st.warning(f"🚶 **Caminhar**: {instrucao_limpa} ({passo['distance']['text']})")
                         else:
-                            st.warning("Nenhum ônibus desta linha reportado pelo BODS no radar agora.")
-
-                elif "Escócia" in regiao_selecionada:
-                    st.warning("⚠️ Insira a chave da Traveline para ativar o radar escocês.")
-                
-                # 5. COMBOIOS (NATIONAL RAIL) - O Painel das Estações (SOAP XML)
-                elif "National Rail" in regiao_selecionada:
-                    if CHAVE_RAIL == 'CHAVE_DARWIN_AQUI':
-                        st.warning("⚠️ Insira a chave da Darwin API (Token) no código para ativar o radar ferroviário.")
-                    else:
-                        st.info("📡 A ligar ao painel central da National Rail...")
-                        
-                        dicionario_crs = {
-                            "kings cross": "KGX", "edinburgh": "EDB", "inverness": "INV",
-                            "euston": "EUS", "victoria": "VIC", "waterloo": "WAT", 
-                            "paddington": "PAD", "st pancras": "STP"
-                        }
-                        
-                        origem_limpa = origem_digitada.lower().replace("'", "").replace("london ", "")
-                        codigo_estacao = None
-                        
-                        for nome_estacao, crs in dicionario_crs.items():
-                            if nome_estacao in origem_limpa:
-                                codigo_estacao = crs
-                                break
-                                
-                        if codigo_estacao:
-                            st.markdown(f"### 🚆 Painel de Partidas: {codigo_estacao.upper()}")
-                            
-                            xml_request = f"""<?xml version="1.0"?>
-                            <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns1="http://thalesgroup.com/RTTI/2017-10-01/ldb/" xmlns:ns2="http://thalesgroup.com/RTTI/2013-11-28/Token/types">
-                              <SOAP-ENV:Header>
-                                <ns2:AccessToken>
-                                  <ns2:TokenValue>{CHAVE_RAIL}</ns2:TokenValue>
-                                </ns2:AccessToken>
-                              </SOAP-ENV:Header>
-                              <SOAP-ENV:Body>
-                                <ns1:GetDepartureBoardRequest>
-                                  <ns1:numRows>5</ns1:numRows>
-                                  <ns1:crs>{codigo_estacao}</ns1:crs>
-                                </ns1:GetDepartureBoardRequest>
-                              </SOAP-ENV:Body>
-                            </SOAP-ENV:Envelope>"""
-                            
-                            headers = {'Content-Type': 'text/xml'}
-                            url_darwin = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx"
-                            
-                            try:
-                                resposta_rail = requests.post(url_darwin, data=xml_request, headers=headers)
-                                
-                                if resposta_rail.status_code == 200:
-                                    root = ET.fromstring(resposta_rail.content)
-                                    namespaces = {'lt7': 'http://thalesgroup.com/RTTI/2017-10-01/ldb/types'}
-                                    servicos = root.findall('.//lt7:trainServices/lt7:service', namespaces)
-                                    
-                                    if servicos:
-                                        for trem in servicos:
-                                            destino_trem = trem.find('lt7:destination/lt7:location/lt7:locationName', namespaces).text
-                                            hora_oficial = trem.find('lt7:std', namespaces).text
-                                            hora_estimada = trem.find('lt7:etd', namespaces).text
-                                            plataforma = trem.find('lt7:platform', namespaces)
-                                            plat_texto = plataforma.text if plataforma is not None else "Aguarde..."
-                                            
-                                            status = "✅ No Horário" if hora_estimada == "On time" else f"⚠️ Atrasado para {hora_estimada}"
-                                            
-                                            st.info(f"🕒 **{hora_oficial}** ➔ **{destino_trem}** | Plataforma: **{plat_texto}** | {status}")
-                                    else:
-                                        st.warning("Nenhum trem programado para as próximas horas nesta estação.")
-                            except Exception as e:
-                                st.error(f"Erro ao ler os dados da National Rail: {e}")
-                        else:
-                            st.warning("Para ver o painel ao vivo, digite uma estação principal na origem (ex: King's Cross, Edinburgh, Inverness, Paddington).")
-
+                            st.write(f"➡️ {instrucao_limpa}")
+                else:
+                    st.error("Não foi possível traçar uma rota entre esses dois locais. Verifique os endereços digitados.")
+        else:
+            st.warning("Por favor, preencha a origem e o destino antes de buscar.")
+            
 # ==========================================
 # ABA 2: O MONITOR CLÁSSICO (BUSCA DIRETA)
 # ==========================================
