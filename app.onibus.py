@@ -537,7 +537,7 @@ with aba_ponto:
         paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={busca_ponto}").json()
         
         if paradas:
-            opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
+            opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']}) - ID: {p['cp']}": p['cp'] for p in paradas}
             
             # 2. Deixar você escolher exatamente em qual ponto está
             escolha_parada = st.selectbox("Selecione a parada exata:", list(opcoes_paradas.keys()))
