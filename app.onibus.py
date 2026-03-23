@@ -516,7 +516,7 @@ with aba_monitor:
 
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO (EXPRESSO + RADAR GOOGLE)
+# ABA 3: PAINEL DO PONTO (O HUB COMPLETO)
 # ==========================================
 with aba_ponto:
     st.subheader("🚏 Painel Expresso do Ponto")
@@ -532,6 +532,7 @@ with aba_ponto:
     pontos_favoritos = {
         "🌟 Parada 1 - Sabesp (Sentido Centro)": 7203277,
         "🌟 Américo Brasiliense (Sentido Bairro)": 7203285,
+        "🚌 Procurar ponto pela Linha de Ônibus (Novo!)...": "LINHA",
         "🔍 Procurar ponto por nome (Busca SPTrans)...": "BUSCAR",
         "📍 Descobrir pontos perto de mim (Radar Google)...": "GPS"
     }
@@ -543,33 +544,25 @@ with aba_ponto:
     nome_exibicao = escolha_rapida.replace("🌟 ", "")
     
     # ---------------------------------------------------------
-    # OPÇÃO A: RADAR GOOGLE (A Nova Ponte Inteligente)
+    # OPÇÃO A: RADAR GOOGLE (Tradutor de GPS)
     # ---------------------------------------------------------
     if pontos_favoritos[escolha_rapida] == "GPS":
         st.info("🤖 **Radar Ativado:** O Google vai descobrir a sua rua exata e perguntar para a SPTrans onde estão as paradas.")
-        local_atual = st.text_input("Onde você está? (Ex: 'Shopping Ibirapuera', 'Av Paulista 1000' ou sua coordenada GPS):")
-        
+        local_atual = st.text_input("Onde você está? (Ex: 'Shopping Ibirapuera' ou sua coordenada GPS):")
         if local_atual:
-            # 1. Pergunta pro Google qual é a rua
             url_google = f"https://maps.googleapis.com/maps/api/geocode/json?address={local_atual}&key={CHAVE_GOOGLE}"
             res_google = requests.get(url_google).json()
-            
             if res_google['status'] == 'OK':
                 rua_oficial = ""
-                # Garimpa o nome da rua (route) nos dados do Google
                 for componente in res_google['results'][0]['address_components']:
                     if 'route' in componente['types']:
                         rua_oficial = componente['long_name']
                         break
-                
                 if rua_oficial:
                     st.success(f"📍 O Google detectou que você está na região da **{rua_oficial}**.")
-                    
-                    # 2. Pergunta pra SPTrans onde estão os pontos dessa rua
                     session = requests.Session()
                     session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
                     paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={rua_oficial}").json()
-                    
                     if paradas:
                         opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
                         escolha_parada = st.selectbox("Selecione a parada mais próxima de você:", list(opcoes_paradas.keys()))
@@ -583,7 +576,7 @@ with aba_ponto:
                 st.error("O Google não conseguiu identificar este local. Tente ser mais específico.")
 
     # ---------------------------------------------------------
-    # OPÇÃO B: BUSCA DIRETA SPTRANS (A busca antiga)
+    # OPÇÃO B: BUSCA DIRETA SPTRANS (Pelo Nome)
     # ---------------------------------------------------------
     elif pontos_favoritos[escolha_rapida] == "BUSCAR":
         busca_ponto = st.text_input("Digite o nome da rua ou corredor:")
@@ -598,9 +591,43 @@ with aba_ponto:
                 nome_exibicao = escolha_parada.split('(')[0]
             else:
                 st.error("Nenhum ponto encontrado com esse nome.")
-    
+
     # ---------------------------------------------------------
-    # OPÇÃO C: FAVORITOS VIP (O Caminho Rápido)
+    # OPÇÃO C: BUSCA REVERSA PELA LINHA DO ÔNIBUS (A Nova Tática)
+    # ---------------------------------------------------------
+    elif pontos_favoritos[escolha_rapida] == "LINHA":
+        st.info("🚌 **Rastreio de Rota:** Digite a linha que você quer pegar para ver todos os pontos onde ela para.")
+        busca_linha = st.text_input("Digite o número ou nome da linha (ex: 6450, 6500, Terminal Bandeira):")
+        
+        if busca_linha:
+            session = requests.Session()
+            session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+            
+            # 1. Procurar a linha no sistema
+            linhas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={busca_linha}").json()
+            
+            if linhas:
+                # O sentido importa (ida ou volta), então mostramos as opções
+                opcoes_linhas = {f"{l['c']} - {l['tp']} ➔ {l['ts']}": l['cl'] for l in linhas}
+                escolha_linha = st.selectbox("Selecione a linha exata e o sentido:", list(opcoes_linhas.keys()))
+                codigo_da_linha = opcoes_linhas[escolha_linha]
+                
+                # 2. Puxar todos os pontos onde ESSA linha para
+                paradas_da_linha = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/BuscarParadasPorLinha?codigoLinha={codigo_da_linha}").json()
+                
+                if paradas_da_linha:
+                    st.success(f"Encontramos {len(paradas_da_linha)} paradas no trajeto dessa linha!")
+                    opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas_da_linha}
+                    escolha_parada = st.selectbox("Escolha em qual ponto você está esperando:", list(opcoes_paradas.keys()))
+                    codigo_da_parada = opcoes_paradas[escolha_parada]
+                    nome_exibicao = escolha_parada.split('(')[0]
+                else:
+                    st.warning("Não conseguimos carregar o trajeto desta linha.")
+            else:
+                st.error("Nenhuma linha encontrada com essa busca.")
+
+    # ---------------------------------------------------------
+    # OPÇÃO D: FAVORITOS VIP (O Caminho Rápido Diário)
     # ---------------------------------------------------------
     else:
         codigo_da_parada = pontos_favoritos[escolha_rapida]
