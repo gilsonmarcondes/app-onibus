@@ -535,6 +535,7 @@ with aba_ponto:
         
         # 1. Buscar a lista de paradas com esse nome
         paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={busca_ponto}").json()
+        st.write("🕵️‍♂️ Raio-X da SPTrans (Dados Brutos):", paradas)
         
         if paradas:
             opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']}) - ID: {p['cp']}": p['cp'] for p in paradas}
