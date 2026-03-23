@@ -597,27 +597,40 @@ with aba_ponto:
     # ---------------------------------------------------------
     elif pontos_favoritos[escolha_rapida] == "LINHA":
         st.info("🚌 **Rastreio de Rota:** Digite a linha que você quer pegar para ver todos os pontos onde ela para.")
-        busca_linha = st.text_input("Digite o número ou nome da linha (ex: 6450, 6500, Terminal Bandeira):")
+        busca_linha = st.text_input("Digite o número ou nome da linha (ex: 6450, 6500, 5300):")
         
         if busca_linha:
             session = requests.Session()
             session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
             
-            # 1. Procurar a linha no sistema
             linhas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={busca_linha}").json()
             
             if linhas:
-                # O sentido importa (ida ou volta), então mostramos as opções
-                opcoes_linhas = {f"{l.get('c', 'Linha')} - {l.get('tp', 'Origem')} ➔ {l.get('ts', 'Destino')}": l.get('cl') for l in linhas}
+                opcoes_linhas = {}
+                for l in linhas:
+                    numero = l.get('c', 'Linha')
+                    term_princ = l.get('tp', 'Terminal 1')
+                    term_sec = l.get('ts', 'Terminal 2')
+                    sentido = l.get('sl', 1)
+                    
+                    # Identifica a direção real para não engolir a opção no Python
+                    if sentido == 1:
+                        nome_rota = f"{numero} (IDA) - {term_princ} ➔ {term_sec} [ID: {l.get('cl')}]"
+                    else:
+                        nome_rota = f"{numero} (VOLTA) - {term_sec} ➔ {term_princ} [ID: {l.get('cl')}]"
+                        
+                    opcoes_linhas[nome_rota] = l.get('cl')
+                
                 escolha_linha = st.selectbox("Selecione a linha exata e o sentido:", list(opcoes_linhas.keys()))
                 codigo_da_linha = opcoes_linhas[escolha_linha]
                 
-                # 2. Puxar todos os pontos onde ESSA linha para
+                # Puxar todos os pontos onde ESSA linha para
                 paradas_da_linha = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/BuscarParadasPorLinha?codigoLinha={codigo_da_linha}").json()
                 
                 if paradas_da_linha:
                     st.success(f"Encontramos {len(paradas_da_linha)} paradas no trajeto dessa linha!")
-                    opcoes_paradas = {f"{p['np']} (Endereço: {p.get('ed', '')}) - ID: {p['cp']}": p['cp'] for p in paradas_da_linha}
+                    # Adicionando o `.get` e o ID no final para blindar a lista de paradas também
+                    opcoes_paradas = {f"{p['np']} (Endereço: {p.get('ed', 'S/N')}) - ID: {p['cp']}": p['cp'] for p in paradas_da_linha}
                     escolha_parada = st.selectbox("Escolha em qual ponto você está esperando:", list(opcoes_paradas.keys()))
                     codigo_da_parada = opcoes_paradas[escolha_parada]
                     nome_exibicao = escolha_parada.split('(')[0]
