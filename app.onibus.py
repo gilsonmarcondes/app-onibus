@@ -467,7 +467,7 @@ with aba_monitor:
             dados_linhas_manual = {}
             
             for l in linhas:
-                trajeto_str = f"{l.get('tp', '')} ➔ {l.get('ts', '')}" if l.get('sl') == 1 else f"{l.get('ts', '')} ➔ {l.get('tp', '')}"
+                trajeto_str = f"{l.get('ts', '')} ➔ {l.get('tp', '')}" if l.get('sl') == 1 else f"{l.get('tp', '')} ➔ {l.get('ts', '')}"
                 nome_formatado = f"{l.get('lt', '')} - {l.get('tl', '')} ({trajeto_str})"
                 opcoes_linha[nome_formatado] = l['cl']
                 dados_linhas_manual[nome_formatado] = l
