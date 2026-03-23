@@ -516,7 +516,7 @@ with aba_monitor:
 
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO (EXPRESSO E FAVORITOS)
+# ABA 3: PAINEL DO PONTO (EXPRESSO + RADAR GOOGLE)
 # ==========================================
 with aba_ponto:
     st.subheader("🚏 Painel Expresso do Ponto")
@@ -532,7 +532,8 @@ with aba_ponto:
     pontos_favoritos = {
         "🌟 Parada 1 - Sabesp (Sentido Centro)": 7203277,
         "🌟 Américo Brasiliense (Sentido Bairro)": 7203285,
-        "🔍 Procurar outro ponto pela cidade...": "BUSCAR"
+        "🔍 Procurar ponto por nome (Busca SPTrans)...": "BUSCAR",
+        "📍 Descobrir pontos perto de mim (Radar Google)...": "GPS"
     }
     
     escolha_rapida = st.selectbox("Onde você está agora?", list(pontos_favoritos.keys()))
@@ -541,8 +542,50 @@ with aba_ponto:
     codigo_da_parada = None
     nome_exibicao = escolha_rapida.replace("🌟 ", "")
     
-    # Se você quiser procurar um ponto novo que não está nos favoritos
-    if pontos_favoritos[escolha_rapida] == "BUSCAR":
+    # ---------------------------------------------------------
+    # OPÇÃO A: RADAR GOOGLE (A Nova Ponte Inteligente)
+    # ---------------------------------------------------------
+    if pontos_favoritos[escolha_rapida] == "GPS":
+        st.info("🤖 **Radar Ativado:** O Google vai descobrir a sua rua exata e perguntar para a SPTrans onde estão as paradas.")
+        local_atual = st.text_input("Onde você está? (Ex: 'Shopping Ibirapuera', 'Av Paulista 1000' ou sua coordenada GPS):")
+        
+        if local_atual:
+            # 1. Pergunta pro Google qual é a rua
+            url_google = f"https://maps.googleapis.com/maps/api/geocode/json?address={local_atual}&key={CHAVE_GOOGLE}"
+            res_google = requests.get(url_google).json()
+            
+            if res_google['status'] == 'OK':
+                rua_oficial = ""
+                # Garimpa o nome da rua (route) nos dados do Google
+                for componente in res_google['results'][0]['address_components']:
+                    if 'route' in componente['types']:
+                        rua_oficial = componente['long_name']
+                        break
+                
+                if rua_oficial:
+                    st.success(f"📍 O Google detectou que você está na região da **{rua_oficial}**.")
+                    
+                    # 2. Pergunta pra SPTrans onde estão os pontos dessa rua
+                    session = requests.Session()
+                    session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+                    paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={rua_oficial}").json()
+                    
+                    if paradas:
+                        opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
+                        escolha_parada = st.selectbox("Selecione a parada mais próxima de você:", list(opcoes_paradas.keys()))
+                        codigo_da_parada = opcoes_paradas[escolha_parada]
+                        nome_exibicao = escolha_parada.split('(')[0]
+                    else:
+                        st.warning(f"A SPTrans não encontrou nenhuma parada cadastrada com o nome '{rua_oficial}'.")
+                else:
+                    st.warning("O Google encontrou o local, mas não conseguiu extrair o nome da rua principal.")
+            else:
+                st.error("O Google não conseguiu identificar este local. Tente ser mais específico.")
+
+    # ---------------------------------------------------------
+    # OPÇÃO B: BUSCA DIRETA SPTRANS (A busca antiga)
+    # ---------------------------------------------------------
+    elif pontos_favoritos[escolha_rapida] == "BUSCAR":
         busca_ponto = st.text_input("Digite o nome da rua ou corredor:")
         if busca_ponto:
             session = requests.Session()
@@ -556,13 +599,15 @@ with aba_ponto:
             else:
                 st.error("Nenhum ponto encontrado com esse nome.")
     
-    # Se você escolheu um dos seus favoritos (O caminho rápido)
+    # ---------------------------------------------------------
+    # OPÇÃO C: FAVORITOS VIP (O Caminho Rápido)
+    # ---------------------------------------------------------
     else:
         codigo_da_parada = pontos_favoritos[escolha_rapida]
         session = requests.Session()
         session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
         
-    # --- O MOTOR DO LETREIRO DIGITAL ---
+    # --- O MOTOR DO LETREIRO DIGITAL (Não mexemos aqui) ---
     if codigo_da_parada:
         filtro_linha = st.text_input("Filtrar por linha (opcional - ex: 6500, 6450):", placeholder="Deixe em branco para ver todas as linhas", key="filtro_aba3")
         
@@ -577,13 +622,10 @@ with aba_ponto:
             
             for linha in linhas_chegando:
                 numero_linha = linha.get('c', '')
-                
-                # O Filtro a Laser em ação
                 if filtro_linha and filtro_linha not in numero_linha:
                     continue 
                     
                 letreiro = f"{numero_linha} - {linha.get('lt0', 'Destino')} ➔ {linha.get('lt1', 'Origem')}"
-                
                 for veiculo in linha['vs']:
                     painel.append({"linha": letreiro, "hora_chegada": veiculo['t'], "prefixo": veiculo['p']})
             
@@ -594,6 +636,5 @@ with aba_ponto:
                     st.info(f"🕒 **{item['hora_chegada']}** | 🚌 **{item['linha']}** (Carro: {item['prefixo']})")
             else:
                 st.warning("Nenhum ônibus correspondente ao seu filtro está no radar agora.")
-                
         else:
             st.warning("Não há nenhum ônibus no radar com previsão de chegada para este ponto nos próximos minutos.")
