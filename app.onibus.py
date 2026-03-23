@@ -198,7 +198,7 @@ with aba_monitor:
             m_manual = folium.Map(location=[-23.5505, -46.6333], zoom_start=12, tiles=tema_mapa_classico)
 
             chave_gtfs = f"{linha_sel.get('lt')}-{linha_sel.get('tl')}-{linha_sel.get('sl')}"
-            if chave_gtfs in trajetos_sp:
+            if 'trajetos_sp' in locals() and chave_gtfs in trajetos_sp:
                 folium.PolyLine(trajetos_sp[chave_gtfs], color="#FF0000", weight=4, opacity=0.7).add_to(m_manual)
 
             if qtd_onibus > 0:
