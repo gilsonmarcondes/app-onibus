@@ -514,3 +514,86 @@ with aba_monitor:
         else:
             st.error("Linha não encontrada na base da SPTrans.")
 
+
+# ==========================================
+# ABA 3: PAINEL DO PONTO (EXPRESSO E FAVORITOS)
+# ==========================================
+with aba_ponto:
+    st.subheader("🚏 Painel Expresso do Ponto")
+    st.write("Os seus letreiros digitais particulares a um clique de distância.")
+    
+    col_r1, col_r2 = st.columns([8, 2])
+    auto_refresh_ponto = col_r2.checkbox("🔄 Radar (30s)", value=False, key="refresh_ponto")
+    
+    if auto_refresh_ponto:
+        st_autorefresh(interval=30000, limit=None, key="radar_paradas")
+
+    # --- O SEU MENU VIP DE PONTOS ---
+    pontos_favoritos = {
+        "🌟 Parada 1 - Sabesp (Sentido Centro)": 7203277,
+        "🌟 Américo Brasiliense (Sentido Bairro)": 7203285,
+        "🔍 Procurar outro ponto pela cidade...": "BUSCAR"
+    }
+    
+    escolha_rapida = st.selectbox("Onde você está agora?", list(pontos_favoritos.keys()))
+    st.divider()
+    
+    codigo_da_parada = None
+    nome_exibicao = escolha_rapida.replace("🌟 ", "")
+    
+    # Se você quiser procurar um ponto novo que não está nos favoritos
+    if pontos_favoritos[escolha_rapida] == "BUSCAR":
+        busca_ponto = st.text_input("Digite o nome da rua ou corredor:")
+        if busca_ponto:
+            session = requests.Session()
+            session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+            paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={busca_ponto}").json()
+            if paradas:
+                opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
+                escolha_parada = st.selectbox("Selecione a parada exata:", list(opcoes_paradas.keys()))
+                codigo_da_parada = opcoes_paradas[escolha_parada]
+                nome_exibicao = escolha_parada.split('(')[0]
+            else:
+                st.error("Nenhum ponto encontrado com esse nome.")
+    
+    # Se você escolheu um dos seus favoritos (O caminho rápido)
+    else:
+        codigo_da_parada = pontos_favoritos[escolha_rapida]
+        session = requests.Session()
+        session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+        
+    # --- O MOTOR DO LETREIRO DIGITAL ---
+    if codigo_da_parada:
+        filtro_linha = st.text_input("Filtrar por linha (opcional - ex: 6500, 6450):", placeholder="Deixe em branco para ver todas as linhas", key="filtro_aba3")
+        
+        st.markdown(f"### 🚥 Próximas Chegadas em: {nome_exibicao}")
+        
+        previsao_url = f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={codigo_da_parada}"
+        dados_previsao = session.get(previsao_url).json()
+        
+        if dados_previsao and 'p' in dados_previsao and 'l' in dados_previsao['p']:
+            linhas_chegando = dados_previsao['p']['l']
+            painel = []
+            
+            for linha in linhas_chegando:
+                numero_linha = linha.get('c', '')
+                
+                # O Filtro a Laser em ação
+                if filtro_linha and filtro_linha not in numero_linha:
+                    continue 
+                    
+                letreiro = f"{numero_linha} - {linha.get('lt0', 'Destino')} ➔ {linha.get('lt1', 'Origem')}"
+                
+                for veiculo in linha['vs']:
+                    painel.append({"linha": letreiro, "hora_chegada": veiculo['t'], "prefixo": veiculo['p']})
+            
+            painel = sorted(painel, key=lambda x: x['hora_chegada'])
+            
+            if painel:
+                for item in painel:
+                    st.info(f"🕒 **{item['hora_chegada']}** | 🚌 **{item['linha']}** (Carro: {item['prefixo']})")
+            else:
+                st.warning("Nenhum ônibus correspondente ao seu filtro está no radar agora.")
+                
+        else:
+            st.warning("Não há nenhum ônibus no radar com previsão de chegada para este ponto nos próximos minutos.")
