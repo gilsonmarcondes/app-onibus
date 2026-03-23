@@ -516,11 +516,11 @@ with aba_monitor:
 
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO (O HUB COMPLETO)
+# ABA 3: PAINEL DO PONTO (UX PREMIUM)
 # ==========================================
 with aba_ponto:
     st.subheader("🚏 Painel Expresso do Ponto")
-    st.write("Os seus letreiros digitais particulares a um clique de distância.")
+    st.write("Encontre seu ponto e acompanhe as chegadas em tempo real.")
     
     col_r1, col_r2 = st.columns([8, 2])
     auto_refresh_ponto = col_r2.checkbox("🔄 Radar (30s)", value=False, key="refresh_ponto")
@@ -528,153 +528,202 @@ with aba_ponto:
     if auto_refresh_ponto:
         st_autorefresh(interval=30000, limit=None, key="radar_paradas")
 
-    # --- O SEU MENU VIP DE PONTOS ---
-    pontos_favoritos = {
-        "🌟 Parada 1 - Sabesp (Sentido Centro)": 7203277,
-        "🌟 Américo Brasiliense (Sentido Bairro)": 7203285,
-        "🚌 Procurar ponto pela Linha de Ônibus (Novo!)...": "LINHA",
-        "🔍 Procurar ponto por nome (Busca SPTrans)...": "BUSCAR",
-        "📍 Descobrir pontos perto de mim (Radar Google)...": "GPS"
-    }
-    
-    escolha_rapida = st.selectbox("Onde você está agora?", list(pontos_favoritos.keys()))
-    st.divider()
-    
-    codigo_da_parada = None
-    nome_exibicao = escolha_rapida.replace("🌟 ", "")
-    
-    # ---------------------------------------------------------
-    # OPÇÃO A: RADAR GOOGLE (Tradutor de GPS)
-    # ---------------------------------------------------------
-    if pontos_favoritos[escolha_rapida] == "GPS":
-        st.info("🤖 **Radar Ativado:** O Google vai descobrir a sua rua exata e perguntar para a SPTrans onde estão as paradas.")
-        local_atual = st.text_input("Onde você está? (Ex: 'Shopping Ibirapuera' ou sua coordenada GPS):")
-        if local_atual:
-            url_google = f"https://maps.googleapis.com/maps/api/geocode/json?address={local_atual}&key={CHAVE_GOOGLE}"
-            res_google = requests.get(url_google).json()
-            if res_google['status'] == 'OK':
-                rua_oficial = ""
-                for componente in res_google['results'][0]['address_components']:
-                    if 'route' in componente['types']:
-                        rua_oficial = componente['long_name']
-                        break
-                if rua_oficial:
-                    st.success(f"📍 O Google detectou que você está na região da **{rua_oficial}**.")
-                    session = requests.Session()
-                    session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-                    paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={rua_oficial}").json()
-                    if paradas:
-                        opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
-                        escolha_parada = st.selectbox("Selecione a parada mais próxima de você:", list(opcoes_paradas.keys()))
-                        codigo_da_parada = opcoes_paradas[escolha_parada]
-                        nome_exibicao = escolha_parada.split('(')[0]
-                    else:
-                        st.warning(f"A SPTrans não encontrou nenhuma parada cadastrada com o nome '{rua_oficial}'.")
-                else:
-                    st.warning("O Google encontrou o local, mas não conseguiu extrair o nome da rua principal.")
-            else:
-                st.error("O Google não conseguiu identificar este local. Tente ser mais específico.")
-
-    # ---------------------------------------------------------
-    # OPÇÃO B: BUSCA DIRETA SPTRANS (Pelo Nome)
-    # ---------------------------------------------------------
-    elif pontos_favoritos[escolha_rapida] == "BUSCAR":
-        busca_ponto = st.text_input("Digite o nome da rua ou corredor:")
-        if busca_ponto:
-            session = requests.Session()
-            session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-            paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={busca_ponto}").json()
-            if paradas:
-                opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
-                escolha_parada = st.selectbox("Selecione a parada exata:", list(opcoes_paradas.keys()))
-                codigo_da_parada = opcoes_paradas[escolha_parada]
-                nome_exibicao = escolha_parada.split('(')[0]
-            else:
-                st.error("Nenhum ponto encontrado com esse nome.")
-
-    # ---------------------------------------------------------
-    # OPÇÃO C: BUSCA REVERSA PELA LINHA DO ÔNIBUS (A Nova Tática)
-    # ---------------------------------------------------------
-    elif pontos_favoritos[escolha_rapida] == "LINHA":
-        st.info("🚌 **Rastreio de Rota:** Digite a linha que você quer pegar para ver todos os pontos onde ela para.")
-        busca_linha = st.text_input("Digite o número ou nome da linha (ex: 6450, 6500, 5300):")
+    # --- MEMÓRIA DE CURTO PRAZO (Histórico) ---
+    if 'historico_pontos' not in st.session_state:
+        st.session_state['historico_pontos'] = []
         
+    def salvar_no_historico(nome, codigo, lat, lon):
+        novo_ponto = {"nome": nome, "codigo": codigo, "lat": lat, "lon": lon}
+        if novo_ponto not in st.session_state['historico_pontos']:
+            st.session_state['historico_pontos'].insert(0, novo_ponto)
+        # Mantém apenas os 3 últimos na memória
+        st.session_state['historico_pontos'] = st.session_state['historico_pontos'][:3]
+
+    # Variáveis globais da aba
+    codigo_da_parada = None
+    nome_exibicao = ""
+    lat_exibicao = None
+    lon_exibicao = None
+
+    # --- A NOVA INTERFACE (ABAS INTERNAS) ---
+    tab_fav, tab_linha, tab_gps, tab_nome = st.tabs([
+        "⭐ Favoritos & Histórico", 
+        "🚌 Por Linha", 
+        "🗺️ Radar GPS", 
+        "🔍 Por Nome"
+    ])
+    
+    # 1. ABA DE FAVORITOS & HISTÓRICO
+    with tab_fav:
+        st.markdown("### Seus Pontos Salvos")
+        pontos_vip = {
+            "Parada 1 - Sabesp (Sentido Centro)": {"cp": 7203277, "lat": -23.5927, "lon": -46.6728}, 
+            "Américo Brasiliense (Sentido Bairro)": {"cp": 7203285, "lat": -23.632, "lon": -46.705}
+        }
+        
+        opcoes_dropdown = ["(Selecione um ponto abaixo)"] + [f"🌟 {nome}" for nome in pontos_vip.keys()]
+        
+        if st.session_state['historico_pontos']:
+            opcoes_dropdown += ["--- ÚLTIMAS BUSCAS NESTA SESSÃO ---"]
+            opcoes_dropdown += [f"🕒 {p['nome']}" for p in st.session_state['historico_pontos']]
+            
+        escolha_fav = st.selectbox("Escolha um ponto rápido:", opcoes_dropdown, key="sel_fav")
+        
+        if escolha_fav.startswith("🌟"):
+            nome_limpo = escolha_fav.replace("🌟 ", "")
+            codigo_da_parada = pontos_vip[nome_limpo]["cp"]
+            nome_exibicao = nome_limpo
+            lat_exibicao = pontos_vip[nome_limpo].get("lat")
+            lon_exibicao = pontos_vip[nome_limpo].get("lon")
+        elif escolha_fav.startswith("🕒"):
+            nome_limpo = escolha_fav.replace("🕒 ", "")
+            for p in st.session_state['historico_pontos']:
+                if p['nome'] == nome_limpo:
+                    codigo_da_parada = p['codigo']
+                    nome_exibicao = p['nome']
+                    lat_exibicao = p['lat']
+                    lon_exibicao = p['lon']
+
+    # 2. ABA DE RASTREIO DE LINHA
+    with tab_linha:
+        st.info("Acha todos os pontos do trajeto (Ida e Volta).")
+        busca_linha = st.text_input("Linha (ex: 6450, 5300):", key="input_linha")
         if busca_linha:
             session = requests.Session()
             session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-            
             linhas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={busca_linha}").json()
             
             if linhas:
                 opcoes_linhas = {}
                 for l in linhas:
-                    numero = l.get('c', 'Linha')
-                    term_princ = l.get('tp', 'Terminal 1')
-                    term_sec = l.get('ts', 'Terminal 2')
                     sentido = l.get('sl', 1)
-                    
-                    # Identifica a direção real para não engolir a opção no Python
                     if sentido == 1:
-                        nome_rota = f"{numero} (IDA) - {term_princ} ➔ {term_sec} [ID: {l.get('cl')}]"
+                        nome_rota = f"{l.get('c', 'Linha')} (IDA) - {l.get('tp', 'Term 1')} ➔ {l.get('ts', 'Term 2')} [ID: {l.get('cl')}]"
                     else:
-                        nome_rota = f"{numero} (VOLTA) - {term_sec} ➔ {term_princ} [ID: {l.get('cl')}]"
-                        
+                        nome_rota = f"{l.get('c', 'Linha')} (VOLTA) - {l.get('ts', 'Term 2')} ➔ {l.get('tp', 'Term 1')} [ID: {l.get('cl')}]"
                     opcoes_linhas[nome_rota] = l.get('cl')
                 
-                escolha_linha = st.selectbox("Selecione a linha exata e o sentido:", list(opcoes_linhas.keys()))
+                escolha_linha = st.selectbox("Selecione o sentido:", list(opcoes_linhas.keys()), key="sel_linha")
                 codigo_da_linha = opcoes_linhas[escolha_linha]
-                
-                # Puxar todos os pontos onde ESSA linha para
                 paradas_da_linha = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/BuscarParadasPorLinha?codigoLinha={codigo_da_linha}").json()
                 
                 if paradas_da_linha:
-                    st.success(f"Encontramos {len(paradas_da_linha)} paradas no trajeto dessa linha!")
-                    # Adicionando o `.get` e o ID no final para blindar a lista de paradas também
-                    opcoes_paradas = {f"{p['np']} (Endereço: {p.get('ed', 'S/N')}) - ID: {p['cp']}": p['cp'] for p in paradas_da_linha}
-                    escolha_parada = st.selectbox("Escolha em qual ponto você está esperando:", list(opcoes_paradas.keys()))
-                    codigo_da_parada = opcoes_paradas[escolha_parada]
-                    nome_exibicao = escolha_parada.split('(')[0]
-                else:
-                    st.warning("Não conseguimos carregar o trajeto desta linha.")
-            else:
-                st.error("Nenhuma linha encontrada com essa busca.")
-
-    # ---------------------------------------------------------
-    # OPÇÃO D: FAVORITOS VIP (O Caminho Rápido Diário)
-    # ---------------------------------------------------------
-    else:
-        codigo_da_parada = pontos_favoritos[escolha_rapida]
-        session = requests.Session()
-        session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-        
-    # --- O MOTOR DO LETREIRO DIGITAL (Não mexemos aqui) ---
-    if codigo_da_parada:
-        filtro_linha = st.text_input("Filtrar por linha (opcional - ex: 6500, 6450):", placeholder="Deixe em branco para ver todas as linhas", key="filtro_aba3")
-        
-        st.markdown(f"### 🚥 Próximas Chegadas em: {nome_exibicao}")
-        
-        previsao_url = f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={codigo_da_parada}"
-        dados_previsao = session.get(previsao_url).json()
-        
-        if dados_previsao and 'p' in dados_previsao and 'l' in dados_previsao['p']:
-            linhas_chegando = dados_previsao['p']['l']
-            painel = []
-            
-            for linha in linhas_chegando:
-                numero_linha = linha.get('c', '')
-                if filtro_linha and filtro_linha not in numero_linha:
-                    continue 
+                    st.success(f"Encontramos {len(paradas_da_linha)} paradas!")
+                    opcoes_paradas = {f"{p['np']} (Endereço: {p.get('ed', 'S/N')}) - ID: {p['cp']}": p for p in paradas_da_linha}
+                    escolha_parada = st.selectbox("Escolha seu ponto:", list(opcoes_paradas.keys()), key="sel_ponto_linha")
                     
-                letreiro = f"{numero_linha} - {linha.get('lt0', 'Destino')} ➔ {linha.get('lt1', 'Origem')}"
-                for veiculo in linha['vs']:
-                    painel.append({"linha": letreiro, "hora_chegada": veiculo['t'], "prefixo": veiculo['p']})
-            
-            painel = sorted(painel, key=lambda x: x['hora_chegada'])
-            
-            if painel:
-                for item in painel:
-                    st.info(f"🕒 **{item['hora_chegada']}** | 🚌 **{item['linha']}** (Carro: {item['prefixo']})")
+                    dados_p = opcoes_paradas[escolha_parada]
+                    codigo_da_parada = dados_p['cp']
+                    nome_exibicao = escolha_parada.split('(')[0].strip()
+                    lat_exibicao = dados_p.get('py')
+                    lon_exibicao = dados_p.get('px')
+                    
+                    salvar_no_historico(nome_exibicao, codigo_da_parada, lat_exibicao, lon_exibicao)
+                else:
+                    st.warning("Trajeto indisponível para esta linha.")
             else:
-                st.warning("Nenhum ônibus correspondente ao seu filtro está no radar agora.")
-        else:
-            st.warning("Não há nenhum ônibus no radar com previsão de chegada para este ponto nos próximos minutos.")
+                st.error("Nenhuma linha encontrada.")
+
+    # 3. ABA RADAR GOOGLE
+    with tab_gps:
+        st.info("O Google acha a rua, a SPTrans acha o ponto.")
+        local_atual = st.text_input("Onde você está? (Ex: 'MASP'):", key="input_gps")
+        if local_atual:
+            url_google = f"https://maps.googleapis.com/maps/api/geocode/json?address={local_atual}&key={CHAVE_GOOGLE}"
+            res_google = requests.get(url_google).json()
+            if res_google['status'] == 'OK':
+                rua_oficial = ""
+                for comp in res_google['results'][0]['address_components']:
+                    if 'route' in comp['types']:
+                        rua_oficial = comp['long_name']
+                        break
+                if rua_oficial:
+                    st.success(f"📍 Região: **{rua_oficial}**")
+                    session = requests.Session()
+                    session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+                    paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={rua_oficial}").json()
+                    if paradas:
+                        opcoes_paradas = {f"{p['np']} ({p.get('ed','S/N')})": p for p in paradas}
+                        escolha_parada = st.selectbox("Selecione a parada:", list(opcoes_paradas.keys()), key="sel_ponto_gps")
+                        
+                        dados_p = opcoes_paradas[escolha_parada]
+                        codigo_da_parada = dados_p['cp']
+                        nome_exibicao = escolha_parada.split('(')[0].strip()
+                        lat_exibicao = dados_p.get('py')
+                        lon_exibicao = dados_p.get('px')
+                        salvar_no_historico(nome_exibicao, codigo_da_parada, lat_exibicao, lon_exibicao)
+                    else:
+                        st.warning("Nenhum ponto SPTrans nessa rua.")
+                else:
+                    st.warning("Rua não identificada pelo Google.")
+
+    # 4. ABA BUSCA POR NOME
+    with tab_nome:
+        st.info("A busca raiz (use apenas a palavra-chave principal).")
+        busca_ponto = st.text_input("Palavra-chave (ex: Bela Vista):", key="input_nome")
+        if busca_ponto:
+            session = requests.Session()
+            session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+            paradas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={busca_ponto}").json()
+            if paradas:
+                opcoes_paradas = {f"{p['np']} ({p.get('ed','S/N')})": p for p in paradas}
+                escolha_parada = st.selectbox("Selecione a parada:", list(opcoes_paradas.keys()), key="sel_ponto_nome")
+                
+                dados_p = opcoes_paradas[escolha_parada]
+                codigo_da_parada = dados_p['cp']
+                nome_exibicao = escolha_parada.split('(')[0].strip()
+                lat_exibicao = dados_p.get('py')
+                lon_exibicao = dados_p.get('px')
+                salvar_no_historico(nome_exibicao, codigo_da_parada, lat_exibicao, lon_exibicao)
+            else:
+                st.error("Nenhum ponto encontrado.")
+
+    # ==========================================
+    # O MOTOR DO LETREIRO DIGITAL & MAPA VISUAL
+    # ==========================================
+    st.divider()
+    
+    if codigo_da_parada:
+        col_info, col_mapa = st.columns([6, 4])
+        
+        with col_info:
+            st.markdown(f"### 🚥 Chegadas em: {nome_exibicao}")
+            filtro_linha = st.text_input("Filtrar linha (ex: 6500):", placeholder="Deixe em branco para ver todas", key="filtro_aba3")
+            
+            session = requests.Session()
+            session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+            previsao_url = f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={codigo_da_parada}"
+            dados_previsao = session.get(previsao_url).json()
+            
+            if dados_previsao and 'p' in dados_previsao and 'l' in dados_previsao['p']:
+                linhas_chegando = dados_previsao['p']['l']
+                painel = []
+                
+                for linha in linhas_chegando:
+                    numero_linha = linha.get('c', '')
+                    if filtro_linha and filtro_linha not in numero_linha:
+                        continue 
+                        
+                    letreiro = f"{numero_linha} - {linha.get('lt0', 'Destino')} ➔ {linha.get('lt1', 'Origem')}"
+                    for veiculo in linha['vs']:
+                        painel.append({"linha": letreiro, "hora_chegada": veiculo['t'], "prefixo": veiculo['p']})
+                
+                painel = sorted(painel, key=lambda x: x['hora_chegada'])
+                
+                if painel:
+                    for item in painel:
+                        st.info(f"🕒 **{item['hora_chegada']}** | 🚌 **{item['linha']}** (Carro: {item['prefixo']})")
+                else:
+                    st.warning("Nenhum ônibus correspondente ao seu filtro no momento.")
+            else:
+                st.warning("Não há nenhum ônibus no radar para este ponto.")
+        
+        with col_mapa:
+            if lat_exibicao and lon_exibicao:
+                st.markdown("**📍 Confirmação de Local**")
+                # Import do Pandas para formatar os dados para o mapa
+                import pandas as pd
+                df_mapa = pd.DataFrame({'lat': [lat_exibicao], 'lon': [lon_exibicao]})
+                st.map(df_mapa, zoom=16)
+            else:
+                st.caption("Mapa indisponível (SPTrans não forneceu coordenadas).")
