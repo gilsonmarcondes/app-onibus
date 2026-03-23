@@ -608,7 +608,7 @@ with aba_ponto:
             
             if linhas:
                 # O sentido importa (ida ou volta), então mostramos as opções
-                opcoes_linhas = {f"{l['c']} - {l['tp']} ➔ {l['ts']}": l['cl'] for l in linhas}
+                opcoes_linhas = {f"{l.get('c', 'Linha')} - {l.get('tp', 'Origem')} ➔ {l.get('ts', 'Destino')}": l.get('cl') for l in linhas}
                 escolha_linha = st.selectbox("Selecione a linha exata e o sentido:", list(opcoes_linhas.keys()))
                 codigo_da_linha = opcoes_linhas[escolha_linha]
                 
