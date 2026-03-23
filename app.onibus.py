@@ -556,7 +556,7 @@ with aba_ponto:
                 # Criar uma lista para organizar os ônibus do mais rápido pro mais demorado
                 painel = []
                 for linha in linhas_chegando:
-                    letreiro = f"{linha['c']} - {linha['lt0']} ➔ {linha['ds']}"
+                    letreiro = f"{linha.get('c', 'Linha')} - {linha.get('lt0', 'Destino')} ➔ {linha.get('lt1', 'Origem')}"
                     for veiculo in linha['vs']:
                         # t = horário previsto de chegada
                         painel.append({"linha": letreiro, "hora_chegada": veiculo['t'], "prefixo": veiculo['p']})
