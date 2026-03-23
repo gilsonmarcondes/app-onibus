@@ -720,10 +720,41 @@ with aba_ponto:
         
         with col_mapa:
             if lat_exibicao and lon_exibicao:
-                st.markdown("**📍 Confirmação de Local**")
-                # Import do Pandas para formatar os dados para o mapa
+                st.markdown("**📍 Radar ao Vivo**")
                 import pandas as pd
-                df_mapa = pd.DataFrame({'lat': [lat_exibicao], 'lon': [lon_exibicao]})
-                st.map(df_mapa, zoom=16)
+                
+                # 1. Cria a lista de GPS começando por você (O ponto vermelho maior)
+                coordenadas = [{"lat": lat_exibicao, "lon": lon_exibicao, "cor": "#FF0000", "tamanho": 100}]
+                
+                # 2. Caça o GPS de cada ônibus que está vindo na previsão
+                if dados_previsao and 'p' in dados_previsao and 'l' in dados_previsao['p']:
+                    for linha in dados_previsao['p']['l']:
+                        numero_linha = linha.get('c', '')
+                        
+                        # Se você filtrou uma linha, só mostra os ônibus dela no mapa
+                        if filtro_linha and filtro_linha not in numero_linha:
+                            continue
+                            
+                        for veiculo in linha['vs']:
+                            lat_bus = veiculo.get('py')
+                            lon_bus = veiculo.get('px')
+                            
+                            # Se o GPS do ônibus estiver funcionando, adiciona como ponto azul
+                            if lat_bus and lon_bus:
+                                coordenadas.append({
+                                    "lat": lat_bus, 
+                                    "lon": lon_bus, 
+                                    "cor": "#0000FF", # Azul
+                                    "tamanho": 30     # Menorzinho
+                                })
+                
+                # 3. Desenha o mapa final com as cores e tamanhos
+                df_mapa = pd.DataFrame(coordenadas)
+                try:
+                    # Tenta desenhar com cores (Versões novas do Streamlit)
+                    st.map(df_mapa, latitude="lat", longitude="lon", color="cor", size="tamanho", zoom=14)
+                except:
+                    # Plano B (Versões antigas do Streamlit aceitam só os pontos puros)
+                    st.map(df_mapa, latitude="lat", longitude="lon", zoom=14)
             else:
-                st.caption("Mapa indisponível (SPTrans não forneceu coordenadas).")
+                st.caption("Mapa indisponível (SPTrans não forneceu coordenadas para este ponto).")
