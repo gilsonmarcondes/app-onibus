@@ -516,14 +516,14 @@ with aba_monitor:
 
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO (LETREIRO DIGITAL)
+# ABA 3: PAINEL DO PONTO (LETREIRO DIGITAL COM FILTRO)
 # ==========================================
 with aba_ponto:
     st.subheader("🚏 Painel de Chegadas do Ponto")
     st.write("Descubra quais ônibus estão chegando exatamente onde você está de pé.")
     
     col_ponto1, col_ponto2 = st.columns([8, 2])
-    busca_ponto = col_ponto1.text_input("Nome da rua, corredor ou ponto (ex: Sabesp, Ibirapuera, Nove de Julho):")
+    busca_ponto = col_ponto1.text_input("Nome da rua, corredor ou ponto (ex: Sabesp, Ibirapuera):")
     auto_refresh_ponto = col_ponto2.checkbox("🔄 Radar (30s)", value=False, key="refresh_ponto")
     
     if auto_refresh_ponto:
@@ -539,36 +539,48 @@ with aba_ponto:
         if paradas:
             opcoes_paradas = {f"{p['np']} (Endereço: {p['ed']})": p['cp'] for p in paradas}
             
-            # 2. Deixar você escolher exatamente em qual ponto está (Parada 1, Parada 2, etc.)
+            # 2. Deixar você escolher exatamente em qual ponto está
             escolha_parada = st.selectbox("Selecione a parada exata:", list(opcoes_paradas.keys()))
             codigo_da_parada = opcoes_paradas[escolha_parada]
             
+            # --- NOVO: FILTRO DE LINHA A LASER ---
+            filtro_linha = st.text_input("Filtrar por linha (opcional - ex: 6500, 6450):", placeholder="Deixe em branco para ver todas as linhas")
             st.divider()
+            
             st.markdown(f"### 🚥 Próximas Chegadas em: {escolha_parada.split('(')[0]}")
             
-            # 3. Puxar as previsões de todos os ônibus chegando APENAS nesta parada
+            # 3. Puxar as previsões de todos os ônibus chegando nesta parada
             previsao_url = f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={codigo_da_parada}"
             dados_previsao = session.get(previsao_url).json()
             
             if dados_previsao and 'p' in dados_previsao and 'l' in dados_previsao['p']:
                 linhas_chegando = dados_previsao['p']['l']
-                
-                # Criar uma lista para organizar os ônibus do mais rápido pro mais demorado
                 painel = []
+                
                 for linha in linhas_chegando:
-                    letreiro = f"{linha.get('c', 'Linha')} - {linha.get('lt0', 'Destino')} ➔ {linha.get('lt1', 'Origem')}"
+                    numero_linha = linha.get('c', '')
+                    
+                    # A mágica do filtro acontece aqui:
+                    if filtro_linha and filtro_linha not in numero_linha:
+                        continue # Pula este ônibus se não bater com o que você digitou
+                        
+                    # Usando .get() para evitar o KeyError
+                    letreiro = f"{numero_linha} - {linha.get('lt0', 'Destino')} ➔ {linha.get('lt1', 'Origem')}"
+                    
                     for veiculo in linha['vs']:
-                        # t = horário previsto de chegada
                         painel.append({"linha": letreiro, "hora_chegada": veiculo['t'], "prefixo": veiculo['p']})
                 
-                # Ordenar cronologicamente
+                # Ordenar cronologicamente do mais rápido para o mais demorado
                 painel = sorted(painel, key=lambda x: x['hora_chegada'])
                 
-                # Exibir os "Cards" elegantes na tela
-                for item in painel:
-                    st.info(f"🕒 **{item['hora_chegada']}** | 🚌 **{item['linha']}** (Carro: {item['prefixo']})")
+                # Exibir os "Cards" na tela
+                if painel:
+                    for item in painel:
+                        st.info(f"🕒 **{item['hora_chegada']}** | 🚌 **{item['linha']}** (Carro: {item['prefixo']})")
+                else:
+                    st.warning("Nenhum ônibus correspondente ao seu filtro está no radar para os próximos minutos.")
                     
             else:
-                st.warning("Não há nenhum ônibus no radar com previsão de chegada para este ponto específico nos próximos minutos.")
+                st.warning("Não há nenhum ônibus no radar com previsão de chegada para este ponto nos próximos minutos.")
         else:
             st.error("Nenhum ponto encontrado com esse nome. Tente uma avenida ou nome mais geral.")
