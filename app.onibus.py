@@ -89,7 +89,7 @@ if 'memoria_destino' not in st.session_state:
 aba_rota, aba_monitor, aba_ponto = st.tabs(["🗺️ Planejar Rota", "🚌 Monitor Clássico", "🚏 Painel do Ponto"])
 
 # ==========================================
-# ABA 1: PLANEJADOR DE ROTAS (MÚLTIPLAS OPÇÕES)
+# ABA 1: PLANEJADOR DE ROTAS (PREMIUM VIP)
 # ==========================================
 from datetime import datetime
 
@@ -97,12 +97,19 @@ with aba_rota:
     st.subheader("🗺️ Traçar Nova Rota")
     st.write("Planeje sua viagem e escolha a melhor rota para você.")
     
-    # 1. SELETOR DE MODALIDADE
-    modo_viagem = st.radio(
-        "Como você quer ir?",
-        ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"],
-        horizontal=True
-    )
+    # 1. SELETORES DE MODO E PRIORIDADE
+    col_modo, col_filtro = st.columns(2)
+    with col_modo:
+        modo_viagem = st.radio(
+            "Como você quer ir?",
+            ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"],
+            horizontal=True
+        )
+    with col_filtro:
+        criterio_ordem = st.selectbox(
+            "Qual a sua prioridade?",
+            ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"]
+        )
     
     dict_modos = {"🚌 Transporte Público": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}
     modo_google = dict_modos[modo_viagem]
@@ -114,7 +121,7 @@ with aba_rota:
     with col_destino:
         destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera")
         
-    # 3. A MÁQUINA DO TEMPO (Saída vs Chegada)
+    # 3. A MÁQUINA DO TEMPO
     st.markdown("### ⏱️ Planejamento de Horário")
     tipo_horario = st.radio(
         "Este horário é para a sua:",
@@ -131,9 +138,9 @@ with aba_rota:
     st.divider()
     
     # --- MOTOR DE BUSCA DE ROTA ---
-    if st.button("Buscar Rotas Disponíveis", type="primary", use_container_width=True):
+    if st.button("Buscar Rotas Inteligentes", type="primary", use_container_width=True):
         if origem and destino:
-            with st.spinner("Analisando todas as opções de trajeto..."):
+            with st.spinner("Analisando todas as opções e aplicando filtros..."):
                 
                 dt_viagem = datetime.combine(data_viagem, hora_viagem)
                 timestamp_alvo = int(dt_viagem.timestamp())
@@ -143,27 +150,64 @@ with aba_rota:
                 else:
                     parametro_tempo = f"&departure_time={timestamp_alvo}"
                 
-                # ADICIONAMOS O &alternatives=true AQUI
                 url_directions = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem}&destination={destino}&mode={modo_google}{parametro_tempo}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
                 res_rota = requests.get(url_directions).json()
                 
                 if res_rota['status'] == 'OK':
                     rotas = res_rota['routes']
-                    st.success(f"✅ Encontramos {len(rotas)} opções de rota para você!")
                     
-                    # Vamos criar um "expander" (sanfona) para CADA rota encontrada
-                    for i, rota in enumerate(rotas):
+                    # --- O NOSSO ALGORITMO DE TRIAGEM ---
+                    rotas_analisadas = []
+                    
+                    for rota in rotas:
                         leg = rota['legs'][0]
-                        tempo_total = leg['duration']['text']
-                        distancia_total = leg['distance']['text']
+                        tempo_segundos = leg['duration']['value']
                         
-                        # Definindo títulos para as opções (A primeira é a Mais Rápida)
+                        qtd_conducoes = 0
+                        caminhada_metros = 0
+                        
+                        for passo in leg['steps']:
+                            if passo['travel_mode'] == 'TRANSIT':
+                                qtd_conducoes += 1
+                            elif passo['travel_mode'] == 'WALKING':
+                                caminhada_metros += passo['distance']['value']
+                        
+                        # Se pegou 1 ônibus, fez 0 baldeações. Se pegou 2, fez 1 baldeação.
+                        baldeacoes = max(0, qtd_conducoes - 1)
+                        
+                        rotas_analisadas.append({
+                            'rota_original': rota,
+                            'tempo': tempo_segundos,
+                            'baldeacoes': baldeacoes,
+                            'caminhada': caminhada_metros,
+                            'leg': leg
+                        })
+                    
+                    # Aplicando a ordenação com base na escolha do usuário
+                    if "Rápida" in criterio_ordem:
+                        rotas_analisadas.sort(key=lambda x: x['tempo'])
+                    elif "Baldeações" in criterio_ordem:
+                        rotas_analisadas.sort(key=lambda x: (x['baldeacoes'], x['tempo'])) # Desempata pelo tempo
+                    elif "Caminhada" in criterio_ordem:
+                        rotas_analisadas.sort(key=lambda x: (x['caminhada'], x['tempo']))
+
+                    st.success(f"✅ Filtro aplicado: **{criterio_ordem}** ({len(rotas_analisadas)} opções encontradas)")
+                    
+                    # --- DESENHANDO O RESULTADO NA TELA ---
+                    for i, item in enumerate(rotas_analisadas):
+                        rota = item['rota_original']
+                        leg = item['leg']
+                        tempo_total = leg['duration']['text']
+                        
+                        # Calculando as métricas bonitinhas para o título
+                        caminhada_km = f"{item['caminhada']}m" if item['caminhada'] < 1000 else f"{round(item['caminhada']/1000, 1)}km"
+                        texto_transf = f"{item['baldeacoes']} baldeação(ões)" if item['baldeacoes'] > 0 else "Direto (Sem baldeação)"
+                        
                         if i == 0:
-                            titulo_opcao = f"⭐ OPÇÃO 1 (Mais Rápida): {tempo_total} - {distancia_total}"
+                            titulo_opcao = f"🏆 MELHOR OPÇÃO ({criterio_ordem}): {tempo_total} | {texto_transf} | A pé: {caminhada_km}"
                         else:
-                            titulo_opcao = f"🔄 OPÇÃO {i+1} (Alternativa): {tempo_total} - {distancia_total}"
+                            titulo_opcao = f"🔄 Alternativa {i+1}: {tempo_total} | {texto_transf} | A pé: {caminhada_km}"
                             
-                        # A primeira sanfona já vem aberta (expanded=True)
                         with st.expander(titulo_opcao, expanded=(i == 0)):
                             
                             if "Chegada" in tipo_horario and 'departure_time' in leg:
@@ -218,15 +262,13 @@ with aba_rota:
                                     centro_lng = leg['start_location']['lng']
                                     
                                     m_rota = folium.Map(location=[centro_lat, centro_lng], zoom_start=13, tiles='CartoDB positron')
-                                    # Alterna a cor da linha: Azul para a primeira, Cinza escuro para as alternativas
                                     cor_linha = "#00A1FF" if i == 0 else "#555555"
                                     
                                     folium.PolyLine(coordenadas_rota, color=cor_linha, weight=5, opacity=0.8).add_to(m_rota)
                                     folium.Marker([leg['start_location']['lat'], leg['start_location']['lng']], popup="Origem", icon=folium.Icon(color='green', icon='play')).add_to(m_rota)
                                     folium.Marker([leg['end_location']['lat'], leg['end_location']['lng']], popup="Destino", icon=folium.Icon(color='red', icon='stop')).add_to(m_rota)
                                     
-                                    # A CHAVE AQUI DEVE SER DINÂMICA (key=f"mapa_rota_premium_{i}") PARA NÃO DAR ERRO
-                                    st_folium(m_rota, width=600, height=400, returned_objects=[], key=f"mapa_rota_premium_{i}")
+                                    st_folium(m_rota, width=600, height=400, returned_objects=[], key=f"mapa_rota_algoritmo_{i}")
                 else:
                     st.error("Não foi possível traçar a rota. Verifique se os endereços estão corretos.")
         else:
