@@ -275,17 +275,18 @@ with aba_rota:
             st.warning("Por favor, preencha a origem e o destino antes de buscar.")
 
 # ==========================================
-# ABA 2: O MONITOR CLÁSSICO (BUSCA DIRETA)
+# ABA 2: O MONITOR CLÁSSICO (DASHBOARD PREMIUM)
 # ==========================================
 with aba_monitor:
-    st.subheader("🚌 Monitor de Frota SPTrans")
+    st.subheader("🚌 Monitor de Frota ao Vivo")
+    st.write("Visão panorâmica e raio-x completo da operação da linha.")
     
     col_refresh = st.columns([8, 2])[1]
     auto_refresh = col_refresh.checkbox("🔄 Radar Automático (30s)", value=False)
     if auto_refresh:
         st_autorefresh(interval=30000, limit=None, key="radar_classico")
 
-    linha_busca_manual = st.text_input("Digite o número da linha (ex: 6500):", placeholder="6500")
+    linha_busca_manual = st.text_input("🔍 Digite o número da linha (ex: 6500, 8700):", placeholder="Ex: 6500")
     
     if linha_busca_manual:
         session = requests.Session()
@@ -294,7 +295,7 @@ with aba_monitor:
         linhas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={linha_busca_manual}").json()
         
         if linhas:
-            st.write("Escolha o sentido desejado:")
+            st.markdown("### 🛤️ Selecione o Sentido da Viagem")
             opcoes_linha = {}
             dados_linhas_manual = {}
             
@@ -304,47 +305,79 @@ with aba_monitor:
                 opcoes_linha[nome_formatado] = l['cl']
                 dados_linhas_manual[nome_formatado] = l
             
-            escolha_manual = st.selectbox("", list(opcoes_linha.keys()), label_visibility="collapsed")
+            escolha_manual = st.selectbox("Sentido:", list(opcoes_linha.keys()), label_visibility="collapsed")
             id_linha_manual = opcoes_linha[escolha_manual]
             linha_sel = dados_linhas_manual[escolha_manual]
 
-            st.markdown(f"### Localização Real - {escolha_manual}")
-
+            # Puxando o sinal de GPS da frota
             frota_manual = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={id_linha_manual}").json()
             qtd_onibus = len(frota_manual['vs']) if (frota_manual and 'vs' in frota_manual) else 0
             
+            st.divider()
+            
             if qtd_onibus > 0:
-                st.success(f"Encontrados {qtd_onibus} ônibus em circulação.")
+                # --- 1. HUD: DASHBOARD DE MÉTRICAS ---
+                qtd_acessiveis = sum(1 for v in frota_manual['vs'] if v.get('a'))
+                hora_atualizacao = frota_manual.get('hr', 'N/D')
+                
+                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1.metric("🚌 Ônibus no Radar", qtd_onibus)
+                col_m2.metric("♿ Frota Acessível", f"{qtd_acessiveis} de {qtd_onibus}")
+                col_m3.metric("⏱️ Última Atualização", hora_atualizacao)
+                
+                # --- 2. CÂMERA INTELIGENTE (Calculando o centro dinâmico) ---
+                lats = [v['py'] for v in frota_manual['vs']]
+                lons = [v['px'] for v in frota_manual['vs']]
+                centro_mapa = [sum(lats) / len(lats), sum(lons) / len(lons)]
             else:
-                st.warning("Nenhum ônibus desta linha operando neste sentido agora.")
+                st.warning("Nenhum ônibus desta linha operando neste sentido no momento.")
+                centro_mapa = [-23.5505, -46.6333] # Centro de SP padrão se não houver frota
 
             try:
-                hora_atual = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
-                tema_mapa_classico = 'CartoDB dark_matter' if (hora_atual >= 18 or hora_atual < 6) else 'CartoDB positron'
+                # Mudança de cor do mapa (Claro de dia, Escuro à noite)
+                hora_atual_sp = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
+                tema_mapa_classico = 'CartoDB dark_matter' if (hora_atual_sp >= 18 or hora_atual_sp < 6) else 'CartoDB positron'
             except:
                 tema_mapa_classico = 'CartoDB positron'
 
-            m_manual = folium.Map(location=[-23.5505, -46.6333], zoom_start=12, tiles=tema_mapa_classico)
+            m_manual = folium.Map(location=centro_mapa, zoom_start=13, tiles=tema_mapa_classico)
 
+            # Traça a linha vermelha do percurso se você tiver o arquivo GTFS carregado
             chave_gtfs = f"{linha_sel.get('lt')}-{linha_sel.get('tl')}-{linha_sel.get('sl')}"
-            if 'trajetos_sp' in locals() and chave_gtfs in trajetos_sp:
+            if 'trajetos_sp' in globals() and chave_gtfs in trajetos_sp:
                 folium.PolyLine(trajetos_sp[chave_gtfs], color="#FF0000", weight=4, opacity=0.7).add_to(m_manual)
 
             if qtd_onibus > 0:
+                # Ajustando as bordas do mapa para abraçar todos os pontos extremos
+                sw = [min(lats), min(lons)]
+                ne = [max(lats), max(lons)]
+                m_manual.fit_bounds([sw, ne])
+                
                 for v in frota_manual['vs']:
+                    acessivel_str = "♿ Sim" if v.get('a') else "❌ Não"
+                    
+                    # --- 3. POP-UP RICO EM HTML ---
+                    html_popup = f"""
+                    <div style="font-family: Arial; font-size: 14px; width: 150px;">
+                        <b>Prefixo:</b> {v['p']}<br>
+                        <b>Sinal:</b> {v['t']}<br>
+                        <b>Acessibilidade:</b> {acessivel_str}
+                    </div>
+                    """
+                    
                     folium.Marker(
                         [v['py'], v['px']], 
-                        popup=f"Prefixo: {v['p']}", 
+                        popup=folium.Popup(html_popup, max_width=200), 
                         icon=folium.Icon(color='blue', icon='bus', prefix='fa')
                     ).add_to(m_manual)
             
-            st_folium(m_manual, width=1000, height=600, returned_objects=[], key="mapa_manual")
+            st_folium(m_manual, width=1000, height=600, returned_objects=[], key="mapa_manual_premium")
             
             if not auto_refresh:
-                if st.button('🔄 Atualizar Manualmente'):
+                if st.button('🔄 Forçar Atualização'):
                     st.rerun()
         else:
-            st.error("Linha não encontrada na base da SPTrans.")
+            st.error("Linha não encontrada na base da SPTrans. Verifique o número digitado.")
 
 
 # ==========================================
