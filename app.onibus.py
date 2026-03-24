@@ -13,7 +13,7 @@ from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET 
 
 # --- CONFIGURAÇÃO INICIAL ---
-st.set_page_config(page_title="Hub de Mobilidade - Gilson", layout="wide")
+st.set_page_config(page_title="D23 Mobilidade", layout="wide")
 
 # --- O BANHO DE LOJA (INJEÇÃO DE CSS) ---
 st.markdown("""
