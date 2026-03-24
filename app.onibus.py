@@ -224,118 +224,98 @@ with aba_rota:
                     st_folium(m, width=500, height=350, key=f"m_persistent_{i}")
 
 # ==========================================
-# ABA 2: O MONITOR CLÁSSICO (COM GPS AO VIVO)
+# ABA 2: MONITOR DE FROTA (CENTRO DE COMANDO)
 # ==========================================
-from folium.plugins import LocateControl  # <-- A MÁGICA DO GPS ESTÁ AQUI
-
 with aba_monitor:
-    st.subheader("🚌 Monitor de Frota ao Vivo")
-    st.write("Visão panorâmica e raio-x completo da operação da linha.")
+    st.subheader("🚌 Monitor de Frota em Tempo Real")
     
-    col_refresh = st.columns([8, 2])[1]
-    auto_refresh = col_refresh.checkbox("🔄 Radar Automático (30s)", value=False)
-    if auto_refresh:
-        st_autorefresh(interval=30000, limit=None, key="radar_classico")
+    # --- 1. CONFIGURAÇÃO DE RADAR ---
+    col_refresh, col_gps_manual = st.columns([7, 3])
+    with col_refresh:
+        auto_refresh = st.checkbox("🔄 Radar Automático (30s)", value=False, key="check_auto_aba2")
+        if auto_refresh:
+            st_autorefresh(interval=30000, limit=None, key="radar_aba2")
+    
+    with col_gps_manual:
+        # Botão de GPS para você se localizar no mapa da frota
+        st.write("Sua posição:")
+        meu_gps_aba2 = streamlit_geolocation()
 
-    linha_busca_manual = st.text_input("🔍 Digite o número da linha (ex: 6500, 8700):", placeholder="Ex: 6500")
+    # --- 2. BUSCA DA LINHA ---
+    linha_busca = st.text_input("🔍 Digite a linha (ex: 6500, 8000):", placeholder="6500", key="search_aba2")
     
-    if linha_busca_manual:
-        session = requests.Session()
-        session.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+    if linha_busca:
+        s = requests.Session()
+        s.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
         
-        linhas = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={linha_busca_manual}").json()
+        # Busca detalhes da linha
+        linhas = s.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={linha_busca}").json()
         
         if linhas:
-            st.markdown("### 🛤️ Selecione o Sentido da Viagem")
-            opcoes_linha = {}
-            dados_linhas_manual = {}
+            opcoes = {f"{l['lt']}-{l['tl']} ({l['tp'] if l['sl']==1 else l['ts']} ➔ {l['ts'] if l['sl']==1 else l['tp']})": l for l in linhas}
+            escolha = st.selectbox("Selecione o sentido:", list(opcoes.keys()), key="sel_sentido_aba2")
+            linha_sel = opcoes[escolha]
             
-            for l in linhas:
-                trajeto_str = f"{l.get('ts', '')} ➔ {l.get('tp', '')}" if l.get('sl') == 1 else f"{l.get('tp', '')} ➔ {l.get('ts', '')}"
-                nome_formatado = f"{l.get('lt', '')} - {l.get('tl', '')} ({trajeto_str})"
-                opcoes_linha[nome_formatado] = l['cl']
-                dados_linhas_manual[nome_formatado] = l
+            # Pega a posição de todos os ônibus
+            frota_res = s.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={linha_sel['cl']}").json()
+            veiculos = frota_res.get('vs', [])
             
-            escolha_manual = st.selectbox("Sentido:", list(opcoes_linha.keys()), label_visibility="collapsed")
-            id_linha_manual = opcoes_linha[escolha_manual]
-            linha_sel = dados_linhas_manual[escolha_manual]
-
-            # Puxando o sinal de GPS da frota
-            frota_manual = session.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={id_linha_manual}").json()
-            qtd_onibus = len(frota_manual['vs']) if (frota_manual and 'vs' in frota_manual) else 0
-            
+            # --- 3. DASHBOARD DE MÉTRICAS ---
             st.divider()
+            qtd_total = len(veiculos)
+            qtd_acessivel = sum(1 for v in veiculos if v.get('a'))
             
-            if qtd_onibus > 0:
-                # --- HUD: DASHBOARD DE MÉTRICAS ---
-                qtd_acessiveis = sum(1 for v in frota_manual['vs'] if v.get('a'))
-                hora_atualizacao = frota_manual.get('hr', 'N/D')
-                
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric("🚌 Ônibus no Radar", qtd_onibus)
-                col_m2.metric("♿ Frota Acessível", f"{qtd_acessiveis} de {qtd_onibus}")
-                col_m3.metric("⏱️ Última Atualização", hora_atualizacao)
-                
-                lats = [v['py'] for v in frota_manual['vs']]
-                lons = [v['px'] for v in frota_manual['vs']]
-                centro_mapa = [sum(lats) / len(lats), sum(lons) / len(lons)]
-            else:
-                st.warning("Nenhum ônibus desta linha operando neste sentido no momento.")
-                centro_mapa = [-23.5505, -46.6333]
+            m1, m2, m3 = st.columns(3)
+            m1.metric("🚌 Frota Ativa", qtd_total)
+            m2.metric("♿ Acessíveis", f"{qtd_acessivel}")
+            m3.metric("📡 Último Sinal", frota_res.get('hr', '--:--'))
 
-            try:
-                hora_atual_sp = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
-                tema_mapa_classico = 'CartoDB dark_matter' if (hora_atual_sp >= 18 or hora_atual_sp < 6) else 'CartoDB positron'
-            except:
-                tema_mapa_classico = 'CartoDB positron'
+            # --- 4. MAPA DE CONTROLE ---
+            # Tema dinâmico (Claro/Escuro)
+            h = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
+            tema = 'CartoDB dark_matter' if (h >= 18 or h < 6) else 'CartoDB positron'
+            
+            # Centro do mapa (usa a frota ou centro de SP)
+            centro = [veiculos[0]['py'], veiculos[0]['px']] if veiculos else [-23.55, -46.63]
+            m = folium.Map(location=centro, zoom_start=13, tiles=tema)
+            
+            # Plugin de Localização Ativa (Mira)
+            LocateControl(position="topright", strings={"title": "Onde eu estou?"}).add_to(m)
 
-            # Criando o mapa
-            m_manual = folium.Map(location=centro_mapa, zoom_start=13, tiles=tema_mapa_classico)
-
-            # --- O BOTÃO DE GPS DO USUÁRIO ---
-            LocateControl(
-                position="bottomright",
-                drawCircle=False, # Não desenha aquele círculo azul gigante em volta, só o ponto
-                showPopup=False,
-                strings={"title": "Encontrar minha localização atual"}
-            ).add_to(m_manual)
-
-            # Traça a linha vermelha do percurso
-            chave_gtfs = f"{linha_sel.get('lt')}-{linha_sel.get('tl')}-{linha_sel.get('sl')}"
-            if 'trajetos_sp' in globals() and chave_gtfs in trajetos_sp:
-                folium.PolyLine(trajetos_sp[chave_gtfs], color="#FF0000", weight=4, opacity=0.7).add_to(m_manual)
-
-            if qtd_onibus > 0:
-                sw = [min(lats), min(lons)]
-                ne = [max(lats), max(lons)]
-                m_manual.fit_bounds([sw, ne])
-                
-                for v in frota_manual['vs']:
-                    acessivel_str = "♿ Sim" if v.get('a') else "❌ Não"
-                    # Usando .get() para evitar o KeyError de novo
-                    horario_sinal = v.get('t', v.get('ta', 'Tempo Real')) 
-                    
-                    html_popup = f"""
-                    <div style="font-family: Arial; font-size: 14px; width: 160px;">
-                        <b>Prefixo:</b> {v.get('p', 'N/D')}<br>
-                        <b>Sinal:</b> {horario_sinal}<br>
-                        <b>Acessibilidade:</b> {acessivel_str}
-                    </div>
-                    """
+            if veiculos:
+                for v in veiculos:
+                    icon_color = 'blue' if v.get('a') else 'red'
+                    tip = "♿ Acessível" if v.get('a') else "Padrão"
                     
                     folium.Marker(
-                        [v['py'], v['px']], 
-                        popup=folium.Popup(html_popup, max_width=200), 
-                        icon=folium.Icon(color='blue', icon='bus', prefix='fa')
-                    ).add_to(m_manual)
-            
-            st_folium(m_manual, width=1000, height=600, returned_objects=[], key="mapa_manual_premium")
-            
-            if not auto_refresh:
-                if st.button('🔄 Forçar Atualização'):
-                    st.rerun()
+                        [v['py'], v['px']],
+                        popup=f"🚌 Carro: {v['p']}<br>🕒 Sinal: {v.get('t', 'Real')}<br>{tip}",
+                        icon=folium.Icon(color=icon_color, icon='bus', prefix='fa')
+                    ).add_to(m)
+                
+                # Ajusta o zoom para ver todos os ônibus
+                lats = [v['py'] for v in veiculos]
+                lons = [v['px'] for v in veiculos]
+                m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+
+            st_folium(m, width=1000, height=500, key="mapa_frota_aba2")
+
+            # --- 5. TABELA DE RAIO-X DA FROTA ---
+            st.markdown("### 📋 Lista Detalhada da Frota")
+            if veiculos:
+                import pandas as pd
+                df_frota = pd.DataFrame(veiculos)
+                # Renomeando e limpando para o usuário
+                df_view = df_frota[['p', 't', 'a']].copy()
+                df_view.columns = ['Prefixo (Placa)', 'Último Sinal', 'Acessível?']
+                df_view['Acessível?'] = df_view['Acessível?'].map({True: "✅ Sim", False: "❌ Não"})
+                
+                st.dataframe(df_view, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhum dado de tabela disponível no momento.")
+                
         else:
-            st.error("Linha não encontrada na base da SPTrans. Verifique o número digitado.")
+            st.error("Linha não encontrada.")
 
 # ==========================================
 # ABA 3: PAINEL DO PONTO (UX PREMIUM)
