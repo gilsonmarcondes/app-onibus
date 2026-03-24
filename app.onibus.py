@@ -88,13 +88,14 @@ if 'memoria_destino' not in st.session_state:
 aba_rota, aba_monitor, aba_ponto = st.tabs(["🗺️ Planejar Rota", "🚌 Monitor Clássico", "🚏 Painel do Ponto"])
 
 # ==========================================
-# ABA 1: PLANEJADOR DE ROTAS (PREMIUM VIP)
+# ABA 1: PLANEJADOR DE ROTAS (GPS INTEGRADO)
 # ==========================================
 from datetime import datetime
+from streamlit_geolocation import streamlit_geolocation
 
 with aba_rota:
     st.subheader("🗺️ Traçar Nova Rota")
-    st.write("Planeje sua viagem e escolha a melhor rota para você.")
+    st.write("Planeje sua viagem usando seu endereço ou sua localização atual.")
     
     # 1. SELETORES DE MODO E PRIORIDADE
     col_modo, col_filtro = st.columns(2)
@@ -102,176 +103,150 @@ with aba_rota:
         modo_viagem = st.radio(
             "Como você quer ir?",
             ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"],
-            horizontal=True
+            horizontal=True, key="modo_aba1"
         )
     with col_filtro:
         criterio_ordem = st.selectbox(
             "Qual a sua prioridade?",
-            ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"]
+            ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"],
+            key="criterio_aba1"
         )
     
     dict_modos = {"🚌 Transporte Público": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}
     modo_google = dict_modos[modo_viagem]
 
-    # 2. ORIGEM E DESTINO
+    # 2. ORIGEM (TEXTO + BOTÃO GPS) E DESTINO
     col_origem, col_destino = st.columns(2)
+    
     with col_origem:
-        origem = st.text_input("📍 Origem:", placeholder="Ex: Av. Paulista, 1500")
-    with col_destino:
-        destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera")
+        origem_input = st.text_input("📍 Origem:", placeholder="Digite o endereço...", key="input_origem")
         
-    # 3. A MÁQUINA DO TEMPO
+        # O BOTÃO MÁGICO DO GPS
+        st.write("Ou use sua posição atual:")
+        local_gps = streamlit_geolocation() 
+        
+        # Lógica para definir a origem final
+        origem_final = None
+        
+        # Prioridade 1: Se o usuário clicou no botão de GPS e temos as coordenadas
+        if local_gps and local_gps.get('latitude') and local_gps.get('longitude'):
+            origem_final = f"{local_gps['latitude']},{local_gps['longitude']}"
+            st.success("📍 Localização capturada via GPS!")
+        # Prioridade 2: Se o usuário digitou um endereço manualmente
+        elif origem_input:
+            origem_final = origem_input
+            
+    with col_destino:
+        destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera", key="input_destino")
+        
+    # 3. PLANEJAMENTO DE HORÁRIO
     st.markdown("### ⏱️ Planejamento de Horário")
     tipo_horario = st.radio(
         "Este horário é para a sua:",
         ["🛫 Saída (Quando vou sair)", "🛬 Chegada (Quando preciso chegar)"],
-        horizontal=True
+        horizontal=True, key="tipo_hora_aba1"
     )
     
     col_data, col_hora = st.columns(2)
     with col_data:
-        data_viagem = st.date_input("Data da viagem:", value="today")
+        data_viagem = st.date_input("Data:", value=datetime.now(), format="DD/MM/YYYY", key="data_aba1")
     with col_hora:
-        hora_viagem = st.time_input("Horário:", value="now")
+        hora_viagem = st.time_input("Horário:", value=datetime.now().time(), key="hora_aba1")
         
     st.divider()
     
-    # --- MOTOR DE BUSCA DE ROTA ---
-    if st.button("Buscar Rotas Inteligentes", type="primary", use_container_width=True):
-        if origem and destino:
-            with st.spinner("Analisando todas as opções e aplicando filtros..."):
+    # --- MOTOR DE BUSCA ---
+    if st.button("Buscar Melhores Rotas", type="primary", use_container_width=True, key="btn_buscar_rota"):
+        if origem_final and destino:
+            with st.spinner("Calculando trajetos inteligentes..."):
                 
+                # Preparando o tempo para o Google
                 dt_viagem = datetime.combine(data_viagem, hora_viagem)
                 timestamp_alvo = int(dt_viagem.timestamp())
                 
-                if "Chegada" in tipo_horario:
-                    parametro_tempo = f"&arrival_time={timestamp_alvo}"
-                else:
-                    parametro_tempo = f"&departure_time={timestamp_alvo}"
+                tempo_param = f"&arrival_time={timestamp_alvo}" if "Chegada" in tipo_horario else f"&departure_time={timestamp_alvo}"
                 
-                url_directions = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem}&destination={destino}&mode={modo_google}{parametro_tempo}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
-                res_rota = requests.get(url_directions).json()
+                # URL com Alternativas Habilitadas
+                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem_final}&destination={destino}&mode={modo_google}{tempo_param}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
+                res = requests.get(url).json()
                 
-                if res_rota['status'] == 'OK':
-                    rotas = res_rota['routes']
+                if res['status'] == 'OK':
+                    rotas_raw = res['routes']
                     
-                    # --- O NOSSO ALGORITMO DE TRIAGEM ---
-                    rotas_analisadas = []
-                    
-                    for rota in rotas:
-                        leg = rota['legs'][0]
-                        tempo_segundos = leg['duration']['value']
+                    # --- ALGORITMO DE TRIAGEM (Igual ao que fizemos antes) ---
+                    lista_processada = []
+                    for r in rotas_raw:
+                        leg = r['legs'][0]
+                        conducoes = sum(1 for p in leg['steps'] if p['travel_mode'] == 'TRANSIT')
+                        caminhada = sum(p['distance']['value'] for p in leg['steps'] if p['travel_mode'] == 'WALKING')
                         
-                        qtd_conducoes = 0
-                        caminhada_metros = 0
-                        
-                        for passo in leg['steps']:
-                            if passo['travel_mode'] == 'TRANSIT':
-                                qtd_conducoes += 1
-                            elif passo['travel_mode'] == 'WALKING':
-                                caminhada_metros += passo['distance']['value']
-                        
-                        # Se pegou 1 ônibus, fez 0 baldeações. Se pegou 2, fez 1 baldeação.
-                        baldeacoes = max(0, qtd_conducoes - 1)
-                        
-                        rotas_analisadas.append({
-                            'rota_original': rota,
-                            'tempo': tempo_segundos,
-                            'baldeacoes': baldeacoes,
-                            'caminhada': caminhada_metros,
+                        lista_processada.append({
+                            'original': r,
+                            'tempo': leg['duration']['value'],
+                            'baldeacoes': max(0, conducoes - 1),
+                            'caminhada': caminhada,
                             'leg': leg
                         })
                     
-                    # Aplicando a ordenação com base na escolha do usuário
+                    # Ordenação de acordo com o Selectbox
                     if "Rápida" in criterio_ordem:
-                        rotas_analisadas.sort(key=lambda x: x['tempo'])
+                        lista_processada.sort(key=lambda x: x['tempo'])
                     elif "Baldeações" in criterio_ordem:
-                        rotas_analisadas.sort(key=lambda x: (x['baldeacoes'], x['tempo'])) # Desempata pelo tempo
+                        lista_processada.sort(key=lambda x: (x['baldeacoes'], x['tempo']))
                     elif "Caminhada" in criterio_ordem:
-                        rotas_analisadas.sort(key=lambda x: (x['caminhada'], x['tempo']))
+                        lista_processada.sort(key=lambda x: (x['caminhada'], x['tempo']))
 
-                    st.success(f"✅ Filtro aplicado: **{criterio_ordem}** ({len(rotas_analisadas)} opções encontradas)")
-                    
-                    # --- DESENHANDO O RESULTADO NA TELA ---
-                    for i, item in enumerate(rotas_analisadas):
-                        rota = item['rota_original']
-                        leg = item['leg']
-                        tempo_total = leg['duration']['text']
+                    # --- EXIBIÇÃO ---
+                    for i, item in enumerate(lista_processada):
+                        r = item['original']
+                        lg = item['leg']
                         
-                        # Calculando as métricas bonitinhas para o título
-                        caminhada_km = f"{item['caminhada']}m" if item['caminhada'] < 1000 else f"{round(item['caminhada']/1000, 1)}km"
-                        texto_transf = f"{item['baldeacoes']} baldeação(ões)" if item['baldeacoes'] > 0 else "Direto (Sem baldeação)"
+                        dist_walk = f"{item['caminhada']}m" if item['caminhada'] < 1000 else f"{round(item['caminhada']/1000, 1)}km"
+                        label = f"🏆 OPÇÃO 1" if i == 0 else f"🔄 OPÇÃO {i+1}"
+                        titulo = f"{label}: {lg['duration']['text']} | {item['baldeacoes']} baldeação(ões) | Pé: {dist_walk}"
                         
-                        if i == 0:
-                            titulo_opcao = f"🏆 MELHOR OPÇÃO ({criterio_ordem}): {tempo_total} | {texto_transf} | A pé: {caminhada_km}"
-                        else:
-                            titulo_opcao = f"🔄 Alternativa {i+1}: {tempo_total} | {texto_transf} | A pé: {caminhada_km}"
-                            
-                        with st.expander(titulo_opcao, expanded=(i == 0)):
-                            
-                            if "Chegada" in tipo_horario and 'departure_time' in leg:
-                                hora_calculada = leg['departure_time']['text']
-                                st.info(f"⏰ **Saia às {hora_calculada}** para chegar no horário planejado.")
-                            elif "Saída" in tipo_horario and 'arrival_time' in leg:
-                                hora_calculada = leg['arrival_time']['text']
-                                st.info(f"⏰ Previsão de chegada: **{hora_calculada}**.")
-
-                            col_texto, col_mapa_rota = st.columns([4, 6])
-                            
-                            with col_texto:
-                                st.markdown("**Passo a passo:**")
-                                for passo in leg['steps']:
-                                    instrucao = passo['html_instructions'].replace('<b>', '**').replace('</b>', '**').replace('<div style="font-size:0.9em">', ' (').replace('</div>', ')')
-                                    modo_passo = passo['travel_mode']
-                                    
-                                    if modo_passo == "TRANSIT":
-                                        linha = passo['transit_details']['line'].get('short_name', 'Metrô/Trem')
-                                        veiculo = passo['transit_details']['line']['vehicle'].get('name', 'Transporte')
-                                        st.write(f"🚌 **{veiculo} ({linha})**: {instrucao}")
-                                    elif modo_passo == "WALKING":
-                                        st.caption(f"🚶 Caminhar: {instrucao} ({passo['distance']['text']})")
+                        with st.expander(titulo, expanded=(i==0)):
+                            c1, c2 = st.columns([4, 6])
+                            with c1:
+                                st.write("**Instruções:**")
+                                for passo in lg['steps']:
+                                    txt = passo['html_instructions'].replace('<b>','**').replace('</b>','**').replace('<div style="font-size:0.9em">',' (').replace('</div>',')')
+                                    if passo['travel_mode'] == "TRANSIT":
+                                        st.info(f"🚌 {txt}")
+                                    elif passo['travel_mode'] == "WALKING":
+                                        st.caption(f"🚶 {txt} ({passo['distance']['text']})")
                                     else:
-                                        st.write(f"🚗 {instrucao}")
-                                        
-                            with col_mapa_rota:
-                                def decodificar_polyline(polyline_str):
-                                    index, lat, lng = 0, 0, 0
-                                    coordinates = []
-                                    changes = {'latitude': 0, 'longitude': 0}
-                                    while index < len(polyline_str):
-                                        for unit in ['latitude', 'longitude']:
-                                            shift, result = 0, 0
+                                        st.write(f"➡️ {txt}")
+                            with c2:
+                                # Mapa da Rota (Função de decodificação interna)
+                                def decode(p):
+                                    i, la, ln = 0, 0, 0
+                                    coords = []
+                                    while i < len(p):
+                                        for u in ['la', 'ln']:
+                                            s, res = 0, 0
                                             while True:
-                                                byte = ord(polyline_str[index]) - 63
-                                                index += 1
-                                                result |= (byte & 0x1f) << shift
-                                                shift += 5
-                                                if not byte >= 0x20: break
-                                            changes[unit] = ~(result >> 1) if (result & 1) else (result >> 1)
-                                        lat += changes['latitude']
-                                        lng += changes['longitude']
-                                        coordinates.append([lat / 100000.0, lng / 100000.0])
-                                    return coordinates
+                                                b = ord(p[i]) - 63
+                                                i += 1
+                                                res |= (b & 0x1f) << s
+                                                s += 5
+                                                if not b >= 0x20: break
+                                            ch = ~(res >> 1) if (res & 1) else (res >> 1)
+                                            if u == 'la': la += ch
+                                            else: ln += ch
+                                        coords.append([la/100000.0, ln/100000.0])
+                                    return coords
 
-                                linha_codificada = rota['overview_polyline']['points']
-                                coordenadas_rota = decodificar_polyline(linha_codificada)
-                                
-                                if coordenadas_rota:
-                                    centro_lat = leg['start_location']['lat']
-                                    centro_lng = leg['start_location']['lng']
-                                    
-                                    m_rota = folium.Map(location=[centro_lat, centro_lng], zoom_start=13, tiles='CartoDB positron')
-                                    cor_linha = "#00A1FF" if i == 0 else "#555555"
-                                    
-                                    folium.PolyLine(coordenadas_rota, color=cor_linha, weight=5, opacity=0.8).add_to(m_rota)
-                                    folium.Marker([leg['start_location']['lat'], leg['start_location']['lng']], popup="Origem", icon=folium.Icon(color='green', icon='play')).add_to(m_rota)
-                                    folium.Marker([leg['end_location']['lat'], leg['end_location']['lng']], popup="Destino", icon=folium.Icon(color='red', icon='stop')).add_to(m_rota)
-                                    
-                                    st_folium(m_rota, width=600, height=400, returned_objects=[], key=f"mapa_rota_algoritmo_{i}")
+                                points = decode(r['overview_polyline']['points'])
+                                m_r = folium.Map(location=points[0], zoom_start=13, tiles='CartoDB positron')
+                                folium.PolyLine(points, color="#00A1FF" if i==0 else "#777", weight=5).add_to(m_r)
+                                folium.Marker(points[0], icon=folium.Icon(color='green')).add_to(m_r)
+                                folium.Marker(points[-1], icon=folium.Icon(color='red')).add_to(m_r)
+                                st_folium(m_r, width=500, height=350, key=f"mapa_aba1_{i}")
                 else:
-                    st.error("Não foi possível traçar a rota. Verifique se os endereços estão corretos.")
+                    st.error("Google não encontrou rotas para esses endereços.")
         else:
-            st.warning("Por favor, preencha a origem e o destino antes de buscar.")
+            st.warning("Informe o destino e a origem (ou use o botão de GPS).")
 
 # ==========================================
 # ABA 2: O MONITOR CLÁSSICO (COM GPS AO VIVO)
