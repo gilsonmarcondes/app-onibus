@@ -97,14 +97,13 @@ with aba_rota:
     st.subheader("🗺️ Traçar Nova Rota")
     st.write("Planeje sua viagem com precisão de GPS, previsões de trânsito e mapas visuais.")
     
-    # 1. SELETOR DE MODALIDADE (Os 3 Botões)
+    # 1. SELETOR DE MODALIDADE
     modo_viagem = st.radio(
         "Como você quer ir?",
         ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"],
         horizontal=True
     )
     
-    # Traduzindo a sua escolha para a linguagem do Google
     dict_modos = {"🚌 Transporte Público": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}
     modo_google = dict_modos[modo_viagem]
 
@@ -115,13 +114,19 @@ with aba_rota:
     with col_destino:
         destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera")
         
-    # 3. A MÁQUINA DO TEMPO (Planejamento Futuro)
-    st.caption("Quando você quer sair?")
+    # 3. A MÁQUINA DO TEMPO (Saída vs Chegada)
+    st.markdown("### ⏱️ Planejamento de Horário")
+    tipo_horario = st.radio(
+        "Este horário é para a sua:",
+        ["🛫 Saída (Quando vou sair)", "🛬 Chegada (Quando preciso chegar)"],
+        horizontal=True
+    )
+    
     col_data, col_hora = st.columns(2)
     with col_data:
         data_viagem = st.date_input("Data da viagem:", value="today")
     with col_hora:
-        hora_viagem = st.time_input("Horário de saída:", value="now")
+        hora_viagem = st.time_input("Horário:", value="now")
         
     st.divider()
     
@@ -130,12 +135,18 @@ with aba_rota:
         if origem and destino:
             with st.spinner("Conectando aos satélites do Google..."):
                 
-                # Convertendo a data e hora para o formato Unix (que o Google exige)
+                # Convertendo a data e hora para o formato Unix
                 dt_viagem = datetime.combine(data_viagem, hora_viagem)
-                timestamp_saida = int(dt_viagem.timestamp())
+                timestamp_alvo = int(dt_viagem.timestamp())
                 
-                # Fazendo a requisição com o Modo de Viagem e o Horário escolhidos
-                url_directions = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem}&destination={destino}&mode={modo_google}&departure_time={timestamp_saida}&language=pt-BR&key={CHAVE_GOOGLE}"
+                # Definindo se o Google deve calcular pela Saída ou pela Chegada
+                if "Chegada" in tipo_horario:
+                    parametro_tempo = f"&arrival_time={timestamp_alvo}"
+                else:
+                    parametro_tempo = f"&departure_time={timestamp_alvo}"
+                
+                # Construindo a URL dinâmica
+                url_directions = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem}&destination={destino}&mode={modo_google}{parametro_tempo}&language=pt-BR&key={CHAVE_GOOGLE}"
                 res_rota = requests.get(url_directions).json()
                 
                 if res_rota['status'] == 'OK':
@@ -145,9 +156,16 @@ with aba_rota:
                     tempo_total = leg['duration']['text']
                     distancia_total = leg['distance']['text']
                     
-                    st.success(f"✅ Rota traçada! Tempo estimado: **{tempo_total}** ({distancia_total})")
+                    # Pegando os horários exatos que o Google calculou
+                    if "Chegada" in tipo_horario and 'departure_time' in leg:
+                        hora_calculada = leg['departure_time']['text']
+                        st.success(f"✅ Para chegar no horário, **saia às {hora_calculada}**. Duração da viagem: **{tempo_total}** ({distancia_total})")
+                    elif "Saída" in tipo_horario and 'arrival_time' in leg:
+                        hora_calculada = leg['arrival_time']['text']
+                        st.success(f"✅ Rota traçada! Você chegará ao destino por volta das **{hora_calculada}**. Duração: **{tempo_total}** ({distancia_total})")
+                    else:
+                        st.success(f"✅ Rota traçada! Tempo estimado: **{tempo_total}** ({distancia_total})")
                     
-                    # Dividindo a tela: Texto do lado esquerdo, Mapa do lado direito
                     col_texto, col_mapa_rota = st.columns([4, 6])
                     
                     with col_texto:
@@ -168,7 +186,6 @@ with aba_rota:
                     with col_mapa_rota:
                         st.markdown("### 🗺️ Visão do Trajeto")
                         
-                        # Função secreta para quebrar a criptografia da linha do Google
                         def decodificar_polyline(polyline_str):
                             index, lat, lng = 0, 0, 0
                             coordinates = []
@@ -188,7 +205,6 @@ with aba_rota:
                                 coordinates.append([lat / 100000.0, lng / 100000.0])
                             return coordinates
 
-                        # Resgata o código do trajeto e decodifica para GPS
                         linha_codificada = rota['overview_polyline']['points']
                         coordenadas_rota = decodificar_polyline(linha_codificada)
                         
@@ -196,13 +212,9 @@ with aba_rota:
                             centro_lat = leg['start_location']['lat']
                             centro_lng = leg['start_location']['lng']
                             
-                            # Cria o mapa visual com o Folium
                             m_rota = folium.Map(location=[centro_lat, centro_lng], zoom_start=13, tiles='CartoDB positron')
-                            
-                            # Desenha a linha azul grossa
                             folium.PolyLine(coordenadas_rota, color="#00A1FF", weight=5, opacity=0.8).add_to(m_rota)
                             
-                            # Coloca o pino Verde (Início) e Vermelho (Fim)
                             folium.Marker([leg['start_location']['lat'], leg['start_location']['lng']], popup="Origem", icon=folium.Icon(color='green', icon='play')).add_to(m_rota)
                             folium.Marker([leg['end_location']['lat'], leg['end_location']['lng']], popup="Destino", icon=folium.Icon(color='red', icon='stop')).add_to(m_rota)
                             
