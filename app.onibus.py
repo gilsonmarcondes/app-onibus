@@ -344,98 +344,121 @@ with aba_monitor:
             st.error("Linha não encontrada na base da SPTrans.")
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO (CHEGADA EM TEMPO REAL)
+# ABA 3: PAINEL DO PONTO (VERSÃO PROXIMIDADE)
 # ==========================================
+import math
+
 with aba_ponto:
-    st.subheader("🚏 Próximas Chegadas no Ponto")
-    st.write("Saiba exatamente quanto tempo falta para o ônibus chegar até você.")
-
-    # --- 1. BUSCA DO PONTO ---
-    c_busca, c_gps = st.columns([7, 3])
-    with c_busca:
-        termo_ponto = st.text_input("🔍 Nome da Rua ou Código do Ponto:", placeholder="Ex: Av. Paulista ou 2600123", key="in_ponto_v3")
+    st.subheader("🚏 Painel de Chegada em Tempo Real")
     
-    with c_gps:
-        st.write("Distância:")
-        raio_busca = st.slider("Raio (metros):", 200, 1000, 500, key="slider_raio_v3")
+    # --- 1. FUNÇÃO AUXILIAR DE DISTÂNCIA ---
+    def calcular_distancia(lat1, lon1, lat2, lon2):
+        # Fórmula simples para distância em metros
+        return math.sqrt((lat1 - lat2)**2 + (lon1 - lon2)**2) * 111320
 
-    if termo_ponto:
-        s_p = requests.Session()
-        s_p.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-        
-        # Busca os pontos por nome ou código
-        pontos = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={termo_ponto}").json()
-        
-        if pontos:
-            dict_pontos = {f"{p['np']} ({p['ed']})": p for p in pontos}
-            sel_ponto = st.selectbox("Selecione o ponto exato:", list(dict_pontos.keys()), key="sel_ponto_v3")
-            ponto_f = dict_pontos[sel_ponto]
-            cp_ponto = ponto_f['cp'] # Código da Parada
+    # --- 2. BUSCA E LOCALIZAÇÃO ---
+    col_busca, col_filtros = st.columns([6, 4])
+    
+    with col_busca:
+        termo_ponto = st.text_input("🔍 Buscar ponto (Rua ou Código):", placeholder="Ex: Av. Paulista ou 2600123", key="in_ponto_v3_ref")
+    
+    with col_filtros:
+        so_acessivel = st.toggle("♿ Apenas Acessíveis", value=False, key="toggle_acess_v3")
+        auto_refresh_ponto = st.checkbox("🔄 Atualizar (30s)", value=True, key="check_ponto_refresh")
+        if auto_refresh_ponto:
+            st_autorefresh(interval=30000, key="refresh_ponto_v3")
+
+    # --- 3. LOGICA DE SELEÇÃO DE PONTO ---
+    s_p = requests.Session()
+    s_p.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+
+    ponto_selecionado = None
+
+    # Se o usuário não digitou nada, mas o GPS está ligado, buscamos pontos próximos
+    if not termo_ponto and gps_global and gps_global.get('latitude'):
+        with st.spinner("Buscando pontos ao seu redor..."):
+            lat_u = gps_global['latitude']
+            lon_u = gps_global['longitude']
+            # Busca pontos em um raio de 500m (API SPTrans)
+            pontos_prox = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/BuscarParadasProximas?lat={lat_u}&lon={lon_u}&raio=500").json()
             
-            st.divider()
+            if pontos_prox:
+                st.info(f"📍 Encontramos {len(pontos_prox)} pontos próximos a você.")
+                dict_prox = {f"{p['np']} ({p['ed']}) - {int(calcular_distancia(lat_u, lon_u, p['py'], p['px']))}m": p for p in pontos_prox}
+                sel_prox = st.selectbox("Escolha um ponto próximo:", list(dict_prox.keys()), key="sel_prox_v3")
+                ponto_selecionado = dict_prox[sel_prox]
+    
+    # Se o usuário digitou algo na busca
+    elif termo_ponto:
+        pontos_busca = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={termo_ponto}").json()
+        if pontos_busca:
+            dict_busca = {f"{p['np']} ({p['ed']})": p for p in pontos_busca}
+            sel_b = st.selectbox("Selecione o ponto:", list(dict_busca.keys()), key="sel_busca_v3")
+            ponto_selecionado = dict_busca[sel_b]
+
+    # --- 4. EXIBIÇÃO DAS PREVISÕES ---
+    if ponto_selecionado:
+        cp = ponto_selecionado['cp']
+        
+        # Mostra distância se o GPS estiver on
+        if gps_global and gps_global.get('latitude'):
+            dist = calcular_distancia(gps_global['latitude'], gps_global['longitude'], ponto_selecionado['py'], ponto_selecionado['px'])
+            st.write(f"🚶 Você está a aproximadamente **{int(dist)} metros** deste ponto.")
+
+        with st.spinner("Consultando cronômetro da SPTrans..."):
+            previsao = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={cp}").json()
+        
+        if previsao and 'p' in previsao:
+            linhas = previsao['p'].get('l', [])
             
-            # --- 2. BUSCA DE PREVISÕES ---
-            with st.spinner("Consultando horários em tempo real..."):
-                previsao = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={cp_ponto}").json()
-                
-            if previsao and 'p' in previsao:
-                info_ponto = previsao['p']
-                linhas_chegando = info_ponto.get('l', [])
-                
-                if linhas_chegando:
-                    st.markdown(f"### ⏱️ Chegadas para: **{info_ponto['np']}**")
-                    
-                    # Layout em cards para as previsões
-                    for linha in linhas_chegando:
-                        with st.container(border=True):
-                            col_icon, col_txt, col_tempo = st.columns([1, 6, 3])
-                            
-                            with col_icon:
-                                st.title("🚌")
-                            
-                            with col_txt:
-                                st.markdown(f"**Linha {linha['c']}**")
-                                st.caption(f"Sentido: {linha['lt0']} ➔ {linha['lt1']}")
-                            
-                            with col_tempo:
-                                # Pega a previsão do veículo mais próximo (v[0])
-                                prox_veiculo = linha['vs'][0]
-                                tempo_chegada = prox_veiculo['t']
-                                st.metric("Chega em", f"{tempo_chegada}")
-                                st.caption(f"Prefixo: {prox_veiculo['p']}")
-
-                    # --- 3. MAPA DO PONTO ---
-                    st.markdown("### 📍 Localização do Ponto")
-                    m_ponto = folium.Map(location=[ponto_f['py'], ponto_f['px']], zoom_start=16, tiles='CartoDB positron')
-                    
-                    # Marcador do Ponto
-                    folium.Marker(
-                        [ponto_f['py'], ponto_f['px']],
-                        popup=ponto_f['np'],
-                        icon=folium.Icon(color='darkblue', icon='map-pin', prefix='fa')
-                    ).add_to(m_ponto)
-                    
-                    # Marcador do Usuário (GPS Global)
-                    if gps_global and gps_global.get('latitude'):
-                        folium.Marker(
-                            [gps_global['latitude'], gps_global['longitude']],
-                            popup="Você",
-                            icon=folium.Icon(color='green', icon='user', prefix='fa')
-                        ).add_to(m_ponto)
-                    
-                    # Mostra os ônibus que estão chegando no mapa
-                    for linha in linhas_chegando:
-                        for v in linha['vs']:
-                            folium.Marker(
-                                [v['py'], v['px']],
-                                popup=f"Linha {linha['c']} - Prefixo {v['p']}",
-                                icon=folium.Icon(color='orange', icon='bus', prefix='fa')
-                            ).add_to(m_ponto)
-
-                    st_folium(m_ponto, width=1000, height=400, key="mapa_ponto_v3")
-                else:
-                    st.info("Nenhum ônibus com previsão de chegada para este ponto no momento.")
+            if not linhas:
+                st.warning("Nenhum ônibus vindo para este ponto agora.")
             else:
-                st.warning("Não há dados de previsão para este ponto agora.")
+                for lin in linhas:
+                    # Filtro de Acessibilidade
+                    veiculos_filtrados = [v for v in lin['vs'] if not so_acessivel or v.get('a')]
+                    
+                    if veiculos_filtrados:
+                        # Pegamos o primeiro ônibus que vai chegar
+                        v_prox = veiculos_filtrados[0]
+                        tempo = v_prox['t'] # Ex: "12:45" ou "5 min"
+                        
+                        # Lógica de Cor: Se chegar em menos de 5 min ou estiver "quase lá"
+                        # Nota: A API as vezes manda horário, as vezes minutos. Vamos tratar o texto:
+                        está_perto = "min" in tempo and int(tempo.replace(" min", "")) <= 5
+                        cor_alerta = "inverse" if está_perto else "off"
+
+                        with st.chat_message("bus" if not está_perto else "user"): # Muda o ícone se estiver perto
+                            c1, c2, c3 = st.columns([2, 5, 3])
+                            with c1:
+                                st.markdown(f"### {lin['c']}")
+                            with c2:
+                                st.write(f"**{lin['lt0']} ➔ {lin['lt1']}**")
+                                st.caption(f"Prefixo: {v_prox['p']} {'♿' if v_prox.get('a') else ''}")
+                            with c3:
+                                if está_perto:
+                                    st.error(f"⏱️ {tempo}")
+                                    st.caption("Corre que está vindo!")
+                                else:
+                                    st.subheader(f"⏱️ {tempo}")
+
+                # --- MAPA DO PONTO E ÔNIBUS VINDO ---
+                st.divider()
+                st.markdown("### 🗺️ Radar do Ponto")
+                m_v3 = folium.Map(location=[ponto_selecionado['py'], ponto_selecionado['px']], zoom_start=16, tiles='CartoDB positron')
+                
+                # Ícone do Ponto
+                folium.Marker([ponto_selecionado['py'], ponto_selecionado['px']], 
+                              icon=folium.Icon(color='blue', icon='map-pin', prefix='fa'),
+                              popup="Ponto Selecionado").add_to(m_v3)
+                
+                # Ônibus que estão chegando (Laranja)
+                for lin in linhas:
+                    for v in lin['vs']:
+                        folium.Marker([v['py'], v['px']], 
+                                      icon=folium.Icon(color='orange', icon='bus', prefix='fa'),
+                                      popup=f"Linha {lin['c']} - Chega em {v['t']}").add_to(m_v3)
+                
+                st_folium(m_v3, width=1000, height=400, key="mapa_ponto_refinado")
         else:
-            st.error("Nenhum ponto encontrado com esse nome ou código.")
+            st.info("Buscando dados de tempo real...")
