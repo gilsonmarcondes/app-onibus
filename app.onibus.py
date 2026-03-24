@@ -88,165 +88,127 @@ if 'memoria_destino' not in st.session_state:
 aba_rota, aba_monitor, aba_ponto = st.tabs(["🗺️ Planejar Rota", "🚌 Monitor Clássico", "🚏 Painel do Ponto"])
 
 # ==========================================
-# ABA 1: PLANEJADOR DE ROTAS (GPS INTEGRADO)
+# ABA 1: PLANEJADOR COM MEMÓRIA (NÃO SOME)
 # ==========================================
 from datetime import datetime
 from streamlit_geolocation import streamlit_geolocation
 
 with aba_rota:
     st.subheader("🗺️ Traçar Nova Rota")
-    st.write("Planeje sua viagem usando seu endereço ou sua localização atual.")
     
-    # 1. SELETORES DE MODO E PRIORIDADE
+    # --- 1. INICIALIZAR MEMÓRIA (Gaveta de resultados) ---
+    if 'resultado_busca' not in st.session_state:
+        st.session_state['resultado_busca'] = None
+
+    # --- 2. SELETORES ---
     col_modo, col_filtro = st.columns(2)
     with col_modo:
-        modo_viagem = st.radio(
-            "Como você quer ir?",
-            ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"],
-            horizontal=True, key="modo_aba1"
-        )
+        modo_viagem = st.radio("Como você quer ir?", ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"], horizontal=True)
     with col_filtro:
-        criterio_ordem = st.selectbox(
-            "Qual a sua prioridade?",
-            ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"],
-            key="criterio_aba1"
-        )
+        criterio_ordem = st.selectbox("Qual a sua prioridade?", ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"])
     
     dict_modos = {"🚌 Transporte Público": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}
-    modo_google = dict_modos[modo_viagem]
 
-    # 2. ORIGEM (TEXTO + BOTÃO GPS) E DESTINO
+    # --- 3. ORIGEM E DESTINO ---
     col_origem, col_destino = st.columns(2)
-    
     with col_origem:
-        origem_input = st.text_input("📍 Origem:", placeholder="Digite o endereço...", key="input_origem")
+        origem_input = st.text_input("📍 Origem:", placeholder="Endereço ou use o GPS abaixo...")
+        local_gps = streamlit_geolocation() # Botão de GPS
         
-        # O BOTÃO MÁGICO DO GPS
-        st.write("Ou use sua posição atual:")
-        local_gps = streamlit_geolocation() 
-        
-        # Lógica para definir a origem final
-        origem_final = None
-        
-        # Prioridade 1: Se o usuário clicou no botão de GPS e temos as coordenadas
-        if local_gps and local_gps.get('latitude') and local_gps.get('longitude'):
+        origem_final = origem_input
+        if local_gps and local_gps.get('latitude'):
             origem_final = f"{local_gps['latitude']},{local_gps['longitude']}"
-            st.success("📍 Localização capturada via GPS!")
-        # Prioridade 2: Se o usuário digitou um endereço manualmente
-        elif origem_input:
-            origem_final = origem_input
-            
+            st.caption("📍 Localização de GPS pronta.")
+
     with col_destino:
-        destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera", key="input_destino")
-        
-    # 3. PLANEJAMENTO DE HORÁRIO
-    st.markdown("### ⏱️ Planejamento de Horário")
-    tipo_horario = st.radio(
-        "Este horário é para a sua:",
-        ["🛫 Saída (Quando vou sair)", "🛬 Chegada (Quando preciso chegar)"],
-        horizontal=True, key="tipo_hora_aba1"
-    )
-    
+        destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera")
+
+    # --- 4. DATA E HORA ---
     col_data, col_hora = st.columns(2)
     with col_data:
-        data_viagem = st.date_input("Data:", value=datetime.now(), format="DD/MM/YYYY", key="data_aba1")
+        data_v = st.date_input("Data:", value=datetime.now(), format="DD/MM/YYYY")
     with col_hora:
-        hora_viagem = st.time_input("Horário:", value=datetime.now().time(), key="hora_aba1")
-        
+        hora_v = st.time_input("Horário:", value=datetime.now().time())
+
     st.divider()
-    
-    # --- MOTOR DE BUSCA ---
-    if st.button("Buscar Melhores Rotas", type="primary", use_container_width=True, key="btn_buscar_rota"):
+
+    # --- 5. O BOTÃO DE BUSCA (SALVA NA MEMÓRIA) ---
+    if st.button("🚀 Buscar Melhores Rotas", type="primary", use_container_width=True):
         if origem_final and destino:
-            with st.spinner("Calculando trajetos inteligentes..."):
+            with st.spinner("Consultando satélites..."):
+                dt_viagem = datetime.combine(data_v, hora_v)
+                timestamp = int(dt_viagem.timestamp())
                 
-                # Preparando o tempo para o Google
-                dt_viagem = datetime.combine(data_viagem, hora_viagem)
-                timestamp_alvo = int(dt_viagem.timestamp())
-                
-                tempo_param = f"&arrival_time={timestamp_alvo}" if "Chegada" in tipo_horario else f"&departure_time={timestamp_alvo}"
-                
-                # URL com Alternativas Habilitadas
-                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem_final}&destination={destino}&mode={modo_google}{tempo_param}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
+                # Chamada da API
+                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem_final}&destination={destino}&mode={dict_modos[modo_viagem]}&departure_time={timestamp}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
                 res = requests.get(url).json()
                 
                 if res['status'] == 'OK':
-                    rotas_raw = res['routes']
-                    
-                    # --- ALGORITMO DE TRIAGEM (Igual ao que fizemos antes) ---
-                    lista_processada = []
-                    for r in rotas_raw:
-                        leg = r['legs'][0]
-                        conducoes = sum(1 for p in leg['steps'] if p['travel_mode'] == 'TRANSIT')
-                        caminhada = sum(p['distance']['value'] for p in leg['steps'] if p['travel_mode'] == 'WALKING')
-                        
-                        lista_processada.append({
-                            'original': r,
-                            'tempo': leg['duration']['value'],
-                            'baldeacoes': max(0, conducoes - 1),
-                            'caminhada': caminhada,
-                            'leg': leg
-                        })
-                    
-                    # Ordenação de acordo com o Selectbox
-                    if "Rápida" in criterio_ordem:
-                        lista_processada.sort(key=lambda x: x['tempo'])
-                    elif "Baldeações" in criterio_ordem:
-                        lista_processada.sort(key=lambda x: (x['baldeacoes'], x['tempo']))
-                    elif "Caminhada" in criterio_ordem:
-                        lista_processada.sort(key=lambda x: (x['caminhada'], x['tempo']))
-
-                    # --- EXIBIÇÃO ---
-                    for i, item in enumerate(lista_processada):
-                        r = item['original']
-                        lg = item['leg']
-                        
-                        dist_walk = f"{item['caminhada']}m" if item['caminhada'] < 1000 else f"{round(item['caminhada']/1000, 1)}km"
-                        label = f"🏆 OPÇÃO 1" if i == 0 else f"🔄 OPÇÃO {i+1}"
-                        titulo = f"{label}: {lg['duration']['text']} | {item['baldeacoes']} baldeação(ões) | Pé: {dist_walk}"
-                        
-                        with st.expander(titulo, expanded=(i==0)):
-                            c1, c2 = st.columns([4, 6])
-                            with c1:
-                                st.write("**Instruções:**")
-                                for passo in lg['steps']:
-                                    txt = passo['html_instructions'].replace('<b>','**').replace('</b>','**').replace('<div style="font-size:0.9em">',' (').replace('</div>',')')
-                                    if passo['travel_mode'] == "TRANSIT":
-                                        st.info(f"🚌 {txt}")
-                                    elif passo['travel_mode'] == "WALKING":
-                                        st.caption(f"🚶 {txt} ({passo['distance']['text']})")
-                                    else:
-                                        st.write(f"➡️ {txt}")
-                            with c2:
-                                # Mapa da Rota (Função de decodificação interna)
-                                def decode(p):
-                                    i, la, ln = 0, 0, 0
-                                    coords = []
-                                    while i < len(p):
-                                        for u in ['la', 'ln']:
-                                            s, res = 0, 0
-                                            while True:
-                                                b = ord(p[i]) - 63
-                                                i += 1
-                                                res |= (b & 0x1f) << s
-                                                s += 5
-                                                if not b >= 0x20: break
-                                            ch = ~(res >> 1) if (res & 1) else (res >> 1)
-                                            if u == 'la': la += ch
-                                            else: ln += ch
-                                        coords.append([la/100000.0, ln/100000.0])
-                                    return coords
-
-                                points = decode(r['overview_polyline']['points'])
-                                m_r = folium.Map(location=points[0], zoom_start=13, tiles='CartoDB positron')
-                                folium.PolyLine(points, color="#00A1FF" if i==0 else "#777", weight=5).add_to(m_r)
-                                folium.Marker(points[0], icon=folium.Icon(color='green')).add_to(m_r)
-                                folium.Marker(points[-1], icon=folium.Icon(color='red')).add_to(m_r)
-                                st_folium(m_r, width=500, height=350, key=f"mapa_aba1_{i}")
+                    # Guardamos TUDO na gaveta da memória do Streamlit
+                    st.session_state['resultado_busca'] = res['routes']
                 else:
-                    st.error("Google não encontrou rotas para esses endereços.")
+                    st.error("Google não encontrou rotas. Verifique os locais.")
         else:
-            st.warning("Informe o destino e a origem (ou use o botão de GPS).")
+            st.warning("Preencha a origem e o destino.")
+
+    # --- 6. EXIBIÇÃO DA MEMÓRIA (Onde a mágica acontece) ---
+    if st.session_state['resultado_busca']:
+        rotas_da_memoria = st.session_state['resultado_busca']
+        
+        # Algoritmo de Triagem (aplicado sobre os dados da memória)
+        processadas = []
+        for r in rotas_da_memoria:
+            leg = r['legs'][0]
+            conducoes = sum(1 for p in leg['steps'] if p['travel_mode'] == 'TRANSIT')
+            caminhada = sum(p['distance']['value'] for p in leg['steps'] if p['travel_mode'] == 'WALKING')
+            processadas.append({'r': r, 't': leg['duration']['value'], 'b': max(0, conducoes-1), 'c': caminhada, 'leg': leg})
+
+        # Ordenação
+        if "Rápida" in criterio_ordem: processadas.sort(key=lambda x: x['t'])
+        elif "Baldeações" in criterio_ordem: processadas.sort(key=lambda x: (x['b'], x['t']))
+        else: processadas.sort(key=lambda x: (x['c'], x['t']))
+
+        st.success(f"✅ Mostrando {len(processadas)} opções (salvas na sessão)")
+
+        for i, item in enumerate(processadas):
+            lg = item['leg']
+            dist_walk = f"{item['c']}m" if item['c'] < 1000 else f"{round(item['c']/1000, 1)}km"
+            titulo = f"{'🏆' if i==0 else '🔄'} Opção {i+1}: {lg['duration']['text']} | {item['b']} baldeações | Caminhada: {dist_walk}"
+            
+            with st.expander(titulo, expanded=(i==0)):
+                c1, c2 = st.columns([4, 6])
+                with c1:
+                    st.write("**Passo a passo:**")
+                    for p in lg['steps']:
+                        inst = p['html_instructions'].replace('<b>','**').replace('</b>','**').replace('<div style="font-size:0.9em">',' (').replace('</div>',')')
+                        st.write(f"- {inst} ({p['distance']['text']})")
+                
+                with c2:
+                    # Função de mapa integrada
+                    def decode(p):
+                        i, la, ln = 0, 0, 0
+                        coords = []
+                        while i < len(p):
+                            for u in ['la', 'ln']:
+                                s, res = 0, 0
+                                while True:
+                                    b = ord(p[i]) - 63
+                                    i += 1
+                                    res |= (b & 0x1f) << s
+                                    s += 5
+                                    if not b >= 0x20: break
+                                ch = ~(res >> 1) if (res & 1) else (res >> 1)
+                                if u == 'la': la += ch
+                                else: ln += ch
+                            coords.append([la/100000.0, ln/100000.0])
+                        return coords
+                    
+                    pts = decode(item['r']['overview_polyline']['points'])
+                    m = folium.Map(location=pts[0], zoom_start=13, tiles='CartoDB positron')
+                    folium.PolyLine(pts, color="#00A1FF" if i==0 else "#777", weight=5).add_to(m)
+                    folium.Marker(pts[0], icon=folium.Icon(color='green')).add_to(m)
+                    folium.Marker(pts[-1], icon=folium.Icon(color='red')).add_to(m)
+                    st_folium(m, width=500, height=350, key=f"mapa_persistente_{i}")
 
 # ==========================================
 # ABA 2: O MONITOR CLÁSSICO (COM GPS AO VIVO)
