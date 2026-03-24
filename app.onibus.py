@@ -357,10 +357,13 @@ with aba_monitor:
                     acessivel_str = "♿ Sim" if v.get('a') else "❌ Não"
                     
                     # --- 3. POP-UP RICO EM HTML ---
+                    # Usa o .get() para não travar se a prefeitura não enviar o horário
+                    horario_sinal = v.get('t', v.get('ta', 'Tempo Real')) 
+                    
                     html_popup = f"""
-                    <div style="font-family: Arial; font-size: 14px; width: 150px;">
-                        <b>Prefixo:</b> {v['p']}<br>
-                        <b>Sinal:</b> {v['t']}<br>
+                    <div style="font-family: Arial; font-size: 14px; width: 160px;">
+                        <b>Prefixo:</b> {v.get('p', 'N/D')}<br>
+                        <b>Sinal:</b> {horario_sinal}<br>
                         <b>Acessibilidade:</b> {acessivel_str}
                     </div>
                     """
