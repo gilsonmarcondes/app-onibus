@@ -18,13 +18,14 @@ st.set_page_config(page_title="D23 Mobilidade", layout="wide")
 with st.sidebar:
     st.header("📍 Localização em Tempo Real")
     st.write("Ative o GPS para usar as funções de 'Minha Posição'.")
-    # Chamada ÚNICA da biblioteca (evita erros de chave duplicada)
-    gps_global = streamlit_geolocation(key="gps_unico_do_app")
+    
+    # AGORA SIM: Sem nenhum parâmetro dentro, para não dar erro!
+    gps_global = streamlit_geolocation() 
     
     if gps_global and gps_global.get('latitude'):
-        st.success(f"GPS Ativo: {gps_global['latitude']:.4f}, {gps_global['longitude']:.4f}")
+        st.success("✅ GPS Conectado!")
     else:
-        st.warning("GPS aguardando ativação...")
+        st.warning("Aguardando sinal...")
     st.divider()
 
 # --- O BANHO DE LOJA (INJEÇÃO DE CSS) ---
@@ -116,13 +117,13 @@ with aba_rota:
         criterio = st.selectbox("Prioridade:", ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"], key="s_ordem_v1")
     
     col_o, col_d = st.columns(2)
-    with col_o:
-        origem_txt = st.text_input("📍 Origem:", placeholder="Endereço ou deixe vazio para usar GPS", key="in_orig_v1")
-        # Lógica inteligente de origem
-        origem_final = origem_txt
-        if not origem_txt and gps_global and gps_global.get('latitude'):
-            origem_final = f"{gps_global['latitude']},{gps_global['longitude']}"
-            st.caption("✅ Usando sua localização atual via GPS.")
+    # Dentro da criação do mapa na Aba 2
+    if gps_global and gps_global.get('latitude'):
+        folium.Marker(
+            [gps_global['latitude'], gps_global['longitude']],
+            popup="Sua Posição",
+            icon=folium.Icon(color='green', icon='user', prefix='fa')
+        ).add_to(m_f)
             
     with col_d:
         destino = st.text_input("🏁 Destino:", placeholder="Ex: Estação da Luz", key="in_dest_v1")
