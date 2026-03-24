@@ -8,6 +8,7 @@ import pytz
 from streamlit_autorefresh import st_autorefresh
 from streamlit_geolocation import streamlit_geolocation
 from folium.plugins import LocateControl
+import googlemaps
 
 # --- CONFIGURAÇÃO INICIAL ---
 st.set_page_config(page_title="D23 Mobilidade", layout="wide")
