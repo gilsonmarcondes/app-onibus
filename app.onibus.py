@@ -89,59 +89,127 @@ if 'memoria_destino' not in st.session_state:
 aba_rota, aba_monitor, aba_ponto = st.tabs(["🗺️ Planejar Rota", "🚌 Monitor Clássico", "🚏 Painel do Ponto"])
 
 # ==========================================
-# ABA 1: PLANEJADOR DE ROTAS (SIMPLIFICADA)
+# ABA 1: PLANEJADOR DE ROTAS (PREMIUM)
 # ==========================================
+from datetime import datetime
+
 with aba_rota:
     st.subheader("🗺️ Traçar Nova Rota")
-    st.write("Digite os endereços para planejar sua viagem com o Google Maps.")
+    st.write("Planeje sua viagem com precisão de GPS, previsões de trânsito e mapas visuais.")
     
-    # --- INTERFACE LIMPA ---
+    # 1. SELETOR DE MODALIDADE (Os 3 Botões)
+    modo_viagem = st.radio(
+        "Como você quer ir?",
+        ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"],
+        horizontal=True
+    )
+    
+    # Traduzindo a sua escolha para a linguagem do Google
+    dict_modos = {"🚌 Transporte Público": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}
+    modo_google = dict_modos[modo_viagem]
+
+    # 2. ORIGEM E DESTINO
     col_origem, col_destino = st.columns(2)
     with col_origem:
-        origem = st.text_input("📍 Origem:", placeholder="Ex: Av. Paulista, 1500 ou 'Onde estou'")
+        origem = st.text_input("📍 Origem:", placeholder="Ex: Av. Paulista, 1500")
     with col_destino:
         destino = st.text_input("🏁 Destino:", placeholder="Ex: Parque Ibirapuera")
+        
+    # 3. A MÁQUINA DO TEMPO (Planejamento Futuro)
+    st.caption("Quando você quer sair?")
+    col_data, col_hora = st.columns(2)
+    with col_data:
+        data_viagem = st.date_input("Data da viagem:", value="today")
+    with col_hora:
+        hora_viagem = st.time_input("Horário de saída:", value="now")
         
     st.divider()
     
     # --- MOTOR DE BUSCA DE ROTA ---
-    if st.button("Buscar Rota Rápida", type="primary", use_container_width=True):
+    if st.button("Buscar Rota Completa", type="primary", use_container_width=True):
         if origem and destino:
-            with st.spinner("Calculando a melhor rota..."):
-                # Fazendo a requisição para o Google Directions API
-                url_directions = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem}&destination={destino}&mode=transit&language=pt-BR&key={CHAVE_GOOGLE}"
+            with st.spinner("Conectando aos satélites do Google..."):
+                
+                # Convertendo a data e hora para o formato Unix (que o Google exige)
+                dt_viagem = datetime.combine(data_viagem, hora_viagem)
+                timestamp_saida = int(dt_viagem.timestamp())
+                
+                # Fazendo a requisição com o Modo de Viagem e o Horário escolhidos
+                url_directions = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem}&destination={destino}&mode={modo_google}&departure_time={timestamp_saida}&language=pt-BR&key={CHAVE_GOOGLE}"
                 res_rota = requests.get(url_directions).json()
                 
                 if res_rota['status'] == 'OK':
-                    rota = res_rota['routes'][0]['legs'][0]
+                    rota = res_rota['routes'][0]
+                    leg = rota['legs'][0]
                     
-                    # Informações principais da viagem
-                    tempo_total = rota['duration']['text']
-                    distancia_total = rota['distance']['text']
+                    tempo_total = leg['duration']['text']
+                    distancia_total = leg['distance']['text']
                     
-                    st.success(f"✅ Rota encontrada! Tempo estimado: **{tempo_total}** ({distancia_total})")
+                    st.success(f"✅ Rota traçada! Tempo estimado: **{tempo_total}** ({distancia_total})")
                     
-                    st.markdown("### 📝 Passo a passo da viagem:")
+                    # Dividindo a tela: Texto do lado esquerdo, Mapa do lado direito
+                    col_texto, col_mapa_rota = st.columns([4, 6])
                     
-                    # Detalhando cada etapa da viagem
-                    for passo in rota['steps']:
-                        instrucao = passo['html_instructions']
-                        # Removendo as tags HTML do Google para ficar um texto limpo
-                        instrucao_limpa = instrucao.replace('<b>', '**').replace('</b>', '**').replace('<div style="font-size:0.9em">', ' (').replace('</div>', ')')
+                    with col_texto:
+                        st.markdown("### 📝 Passo a passo:")
+                        for passo in leg['steps']:
+                            instrucao = passo['html_instructions'].replace('<b>', '**').replace('</b>', '**').replace('<div style="font-size:0.9em">', ' (').replace('</div>', ')')
+                            modo_passo = passo['travel_mode']
+                            
+                            if modo_passo == "TRANSIT":
+                                linha = passo['transit_details']['line'].get('short_name', 'Metrô/Trem')
+                                veiculo = passo['transit_details']['line']['vehicle']['name']
+                                st.info(f"🚌 **{veiculo} ({linha})**: {instrucao}")
+                            elif modo_passo == "WALKING":
+                                st.warning(f"🚶 **Caminhar**: {instrucao} ({passo['distance']['text']})")
+                            else:
+                                st.write(f"🚗 **Carro**: {instrucao}")
+                                
+                    with col_mapa_rota:
+                        st.markdown("### 🗺️ Visão do Trajeto")
                         
-                        modo_viagem = passo['travel_mode']
+                        # Função secreta para quebrar a criptografia da linha do Google
+                        def decodificar_polyline(polyline_str):
+                            index, lat, lng = 0, 0, 0
+                            coordinates = []
+                            changes = {'latitude': 0, 'longitude': 0}
+                            while index < len(polyline_str):
+                                for unit in ['latitude', 'longitude']:
+                                    shift, result = 0, 0
+                                    while True:
+                                        byte = ord(polyline_str[index]) - 63
+                                        index += 1
+                                        result |= (byte & 0x1f) << shift
+                                        shift += 5
+                                        if not byte >= 0x20: break
+                                    changes[unit] = ~(result >> 1) if (result & 1) else (result >> 1)
+                                lat += changes['latitude']
+                                lng += changes['longitude']
+                                coordinates.append([lat / 100000.0, lng / 100000.0])
+                            return coordinates
+
+                        # Resgata o código do trajeto e decodifica para GPS
+                        linha_codificada = rota['overview_polyline']['points']
+                        coordenadas_rota = decodificar_polyline(linha_codificada)
                         
-                        if modo_viagem == "TRANSIT":
-                            linha = passo['transit_details']['line']['short_name']
-                            veiculo = passo['transit_details']['line']['vehicle']['name']
-                            st.info(f"🚌 **Pegar {veiculo} (Linha {linha})**: {instrucao_limpa}")
-                            st.caption(f"⏱️ Duração: {passo['duration']['text']} | 🚏 Paradas: {passo['transit_details'].get('num_stops', '?')}")
-                        elif modo_viagem == "WALKING":
-                            st.warning(f"🚶 **Caminhar**: {instrucao_limpa} ({passo['distance']['text']})")
-                        else:
-                            st.write(f"➡️ {instrucao_limpa}")
+                        if coordenadas_rota:
+                            centro_lat = leg['start_location']['lat']
+                            centro_lng = leg['start_location']['lng']
+                            
+                            # Cria o mapa visual com o Folium
+                            m_rota = folium.Map(location=[centro_lat, centro_lng], zoom_start=13, tiles='CartoDB positron')
+                            
+                            # Desenha a linha azul grossa
+                            folium.PolyLine(coordenadas_rota, color="#00A1FF", weight=5, opacity=0.8).add_to(m_rota)
+                            
+                            # Coloca o pino Verde (Início) e Vermelho (Fim)
+                            folium.Marker([leg['start_location']['lat'], leg['start_location']['lng']], popup="Origem", icon=folium.Icon(color='green', icon='play')).add_to(m_rota)
+                            folium.Marker([leg['end_location']['lat'], leg['end_location']['lng']], popup="Destino", icon=folium.Icon(color='red', icon='stop')).add_to(m_rota)
+                            
+                            st_folium(m_rota, width=600, height=500, returned_objects=[], key="mapa_rota_premium")
+                            
                 else:
-                    st.error("Não foi possível traçar uma rota entre esses dois locais. Verifique os endereços digitados.")
+                    st.error("Não foi possível traçar a rota. Verifique se os endereços estão corretos ou mude o modo de viagem.")
         else:
             st.warning("Por favor, preencha a origem e o destino antes de buscar.")
             
