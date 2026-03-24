@@ -101,79 +101,116 @@ if 'memoria_destino' not in st.session_state:
 aba_rota, aba_monitor, aba_ponto = st.tabs(["🗺️ Planejar Rota", "🚌 Monitor Clássico", "🚏 Painel do Ponto"])
 
 # ==========================================
-# ABA 1: PLANEJADOR DE ROTAS (GPS GLOBAL)
+# ABA 1: PLANEJADOR DE ROTAS (VERSÃO CLARA)
 # ==========================================
 with aba_rota:
     st.subheader("🗺️ Traçar Nova Rota")
     
+    # Limpando a memória de busca se necessário
     if 'resultado_busca' not in st.session_state:
         st.session_state['resultado_busca'] = None
 
+    # --- 1. CONFIGURAÇÕES DE VIAGEM ---
     col_m, col_f = st.columns(2)
     with col_m:
-        modo_v = st.radio("Como quer ir?", ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"], horizontal=True, key="r_modo_v1")
+        modo_v = st.radio("Como quer ir?", ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"], horizontal=True, key="radio_modo_v1")
     with col_f:
-        criterio = st.selectbox("Prioridade:", ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"], key="s_ordem_v1")
+        criterio = st.selectbox("Prioridade:", ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"], key="select_ordem_v1")
     
-    col_o, col_d = st.columns(2)
-    # Dentro da criação do mapa na Aba 2
-    if gps_global and gps_global.get('latitude'):
-        folium.Marker(
-            [gps_global['latitude'], gps_global['longitude']],
-            popup="Sua Posição",
-            icon=folium.Icon(color='green', icon='user', prefix='fa')
-        ).add_to(m_f)
-            
-    with col_d:
-        destino = st.text_input("🏁 Destino:", placeholder="Ex: Estação da Luz", key="in_dest_v1")
+    st.divider()
 
+    # --- 2. DEFINIÇÃO DE ORIGEM E DESTINO ---
+    col_origem_config, col_destino_config = st.columns(2)
+    
+    with col_origem_config:
+        st.markdown("**📍 Ponto de Partida**")
+        # Criamos uma escolha clara para não haver dúvida
+        tipo_origem = st.radio("Definir origem por:", ["⌨️ Digitar Endereço", "🌍 Usar meu GPS"], horizontal=True, key="tipo_origem_v1")
+        
+        origem_final = None
+        
+        if tipo_origem == "⌨️ Digitar Endereço":
+            origem_txt = st.text_input("Endereço de saída:", placeholder="Ex: Av. Paulista, 1500", key="txt_origem_v1")
+            origem_final = origem_txt
+        else:
+            # Verifica se o GPS na barra lateral foi ativado
+            if gps_global and gps_global.get('latitude'):
+                origem_final = f"{gps_global['latitude']},{gps_global['longitude']}"
+                st.success("✅ GPS capturado com sucesso!")
+                st.caption(f"Coordenadas: {origem_final}")
+            else:
+                st.warning("⚠️ Ative o GPS na barra lateral (menu à esquerda) primeiro!")
+
+    with col_destino_config:
+        st.markdown("**🏁 Destino Final**")
+        destino_final = st.text_input("Para onde você vai?", placeholder="Ex: Parque Ibirapuera", key="txt_destino_v1")
+        st.write("") # Espaçador visual
+
+    # --- 3. DATA E HORÁRIO ---
+    st.markdown("### ⏱️ Quando você vai?")
     col_dt, col_hr = st.columns(2)
     with col_dt:
-        data_v = st.date_input("Data:", value=datetime.now(), format="DD/MM/YYYY", key="d_v1")
+        data_v = st.date_input("Data da viagem:", value=datetime.now(), format="DD/MM/YYYY", key="date_viagem_v1")
     with col_hr:
-        hora_v = st.time_input("Horário:", value=datetime.now().time(), key="h_v1")
+        hora_v = st.time_input("Horário planejado:", value=datetime.now().time(), key="time_viagem_v1")
 
-    if st.button("🚀 Buscar Rotas e Rastrear Ônibus", type="primary", use_container_width=True, key="btn_rota_v1"):
-        if origem_final and destino:
-            with st.spinner("Conectando aos satélites e frota..."):
+    st.divider()
+
+    # --- 4. BOTÃO DE BUSCA E LÓGICA ---
+    if st.button("🚀 Buscar Melhores Rotas", type="primary", use_container_width=True, key="btn_busca_v1"):
+        if origem_final and destino_final:
+            with st.spinner("Analisando mapas e rastreando frotas..."):
                 dt_obj = datetime.combine(data_v, hora_v)
                 ts = int(dt_obj.timestamp())
                 m_google = {"🚌 Transporte Público": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}[modo_v]
                 
-                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem_final}&destination={destino}&mode={m_google}&departure_time={ts}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
+                # Chamada API Google
+                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem_final}&destination={destino_final}&mode={m_google}&departure_time={ts}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
                 res = requests.get(url).json()
+                
                 if res['status'] == 'OK':
                     st.session_state['resultado_busca'] = res['routes']
-                else: st.error("Não encontramos rotas. Verifique os endereços.")
-        else: st.warning("Por favor, informe o destino e ative o GPS ou digite a origem.")
+                else:
+                    st.error("O Google não encontrou essa rota. Verifique se o endereço ou o GPS estão corretos.")
+        else:
+            st.warning("Preencha o destino e defina a origem para continuar.")
 
+    # --- 5. EXIBIÇÃO DOS RESULTADOS (MEMÓRIA PERSISTENTE) ---
     if st.session_state['resultado_busca']:
-        for i, r in enumerate(st.session_state['resultado_busca']):
-            lg = r['legs'][0]
-            with st.expander(f"Opção {i+1}: {lg['duration']['text']} ({lg['distance']['text']})", expanded=(i==0)):
+        rotas_encontradas = st.session_state['resultado_busca']
+        
+        # Algoritmo de Triagem para os Expanders
+        for i, r in enumerate(rotas_encontradas):
+            leg = r['legs'][0]
+            with st.expander(f"Opção {i+1}: {leg['duration']['text']} ({lg['distance']['text'] if 'lg' in locals() else ''})", expanded=(i==0)):
                 c1, c2 = st.columns([4, 6])
                 with c1:
-                    for p in lg['steps']:
+                    st.write("**Instruções detalhadas:**")
+                    for p in leg['steps']:
                         inst = p['html_instructions'].replace('<b>','**').replace('</b>','**').replace('<div style="font-size:0.9em">',' (').replace('</div>',')')
+                        
                         if p['travel_mode'] == "TRANSIT":
                             det = p.get('transit_details', {})
-                            n_lin = det.get('line', {}).get('short_name') or det.get('line', {}).get('name') or "---"
+                            n_lin = det.get('line', {}).get('short_name') or det.get('line', {}).get('name') or "???"
                             st.info(f"🚌 **Linha {n_lin}**\n\n{inst}")
-                            # --- RADAR DE PREFIXOS (PLACA DO UBER) ---
+                            
+                            # RASTREIO DE PREFIXO EM TEMPO REAL
                             try:
-                                s = requests.Session()
-                                s.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
-                                l_info = s.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={n_lin}").json()
+                                s_st = requests.Session()
+                                s_st.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+                                l_info = s_st.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={n_lin}").json()
                                 if l_info:
-                                    frota = s.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_info[0]['cl']}").json()
-                                    if frota and frota['vs']:
-                                        pre = [v['p'] for v in frota['vs'][:3]]
-                                        st.success(f"📡 **No Radar:** Veículos {', '.join(pre)}")
+                                    fr = s_st.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_info[0]['cl']}").json()
+                                    if fr and fr['vs']:
+                                        prefixos = [v['p'] for v in fr['vs'][:3]]
+                                        st.success(f"📡 **Radar:** Veículos {', '.join(prefixos)} na linha.")
                             except: pass
-                        else: st.write(f"- {inst}")
+                        else:
+                            st.write(f"- {inst}")
+                            
                 with c2:
-                    # Função de decodificação de linha (interna para evitar imports)
-                    def decode_poly(p):
+                    # Mapa da Rota
+                    def decode_v1(p):
                         index, lat, lng = 0, 0, 0
                         coords = []
                         while index < len(p):
@@ -191,13 +228,12 @@ with aba_rota:
                             coords.append([lat/100000.0, lng/100000.0])
                         return coords
                     
-                    pts = decode_poly(r['overview_polyline']['points'])
-                    m_r = folium.Map(location=pts[0], zoom_start=13, tiles='CartoDB positron')
-                    folium.PolyLine(pts, color="#00A1FF", weight=5).add_to(m_r)
-                    folium.Marker(pts[0], icon=folium.Icon(color='green')).add_to(m_r)
-                    folium.Marker(pts[-1], icon=folium.Icon(color='red')).add_to(m_r)
-                    st_folium(m_r, width=500, height=300, key=f"mapa_r_{i}")
-
+                    pts = decode_v1(r['overview_polyline']['points'])
+                    m_v1 = folium.Map(location=pts[0], zoom_start=13, tiles='CartoDB positron')
+                    folium.PolyLine(pts, color="#00A1FF", weight=5).add_to(m_v1)
+                    folium.Marker(pts[0], icon=folium.Icon(color='green', icon='play')).add_to(m_v1)
+                    folium.Marker(pts[-1], icon=folium.Icon(color='red', icon='stop')).add_to(m_v1)
+                    st_folium(m_v1, width=500, height=350, key=f"mapa_final_v1_{i}")
 
 # ==========================================
 # ABA 2: MONITOR DE FROTA (CENTRO DE COMANDO)
