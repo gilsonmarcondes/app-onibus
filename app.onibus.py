@@ -199,20 +199,25 @@ with aba_rota:
                     st_folium(m_r, width=500, height=300, key=f"mapa_r_{i}")
 
 
-
 # ==========================================
-# ABA 2: MONITOR DE FROTA (DADOS & MAPA)
+# ABA 2: MONITOR "OLHO DE ÁGUIA" (COM BUSCA POR PREFIXO)
 # ==========================================
 with aba_monitor:
     st.subheader("🚌 Monitor de Frota ao Vivo")
     
+    # --- 1. CONFIGURAÇÕES ---
     col_a, col_t = st.columns([7, 3])
     with col_a:
-        auto = st.checkbox("🔄 Atualizar Radar Sozinho (30s)", value=False, key="check_auto_v2")
-        if auto: st_autorefresh(interval=30000, key="refresh_v2")
+        auto = st.checkbox("🔄 Radar Automático (30s)", value=False, key="check_auto_v2_final")
+        if auto: st_autorefresh(interval=30000, key="refresh_v2_final")
     
-    lin_id = st.text_input("🔍 Digite a linha para monitorar:", placeholder="Ex: 8000", key="in_lin_v2")
-    
+    # --- 2. BUSCA DE LINHA E DE PREFIXO ---
+    c_lin, c_pref = st.columns(2)
+    with c_lin:
+        lin_id = st.text_input("🔍 Linha (Número):", placeholder="Ex: 8000", key="in_lin_v2_final")
+    with c_pref:
+        prefixo_alvo = st.text_input("🎯 Destacar Ônibus (Prefixo):", placeholder="Ex: 12345", key="in_pref_v2")
+
     if lin_id:
         s_m = requests.Session()
         s_m.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
@@ -220,52 +225,76 @@ with aba_monitor:
         
         if res_l:
             opcoes = {f"{l['lt']}-{l['tl']} | {l['tp']} ➔ {l['ts']}": l for l in res_l}
-            sel = st.selectbox("Escolha o sentido:", list(opcoes.keys()), key="sel_lin_v2")
+            sel = st.selectbox("Sentido da Operação:", list(opcoes.keys()), key="sel_lin_v2_final")
             l_sel = opcoes[sel]
             
             # Posição dos ônibus
             frota = s_m.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
             vs = frota.get('vs', [])
             
-            # Dashboard
+            # Dashboard de Operação
             st.divider()
             c_m1, c_m2, c_m3 = st.columns(3)
-            c_m1.metric("🚌 Ônibus na Rua", len(vs))
-            c_m2.metric("♿ Com Acessibilidade", sum(1 for v in vs if v.get('a')))
-            c_m3.metric("🕒 Atualização API", frota.get('hr', '--:--'))
+            c_m1.metric("🚌 Frota na Rua", len(vs))
+            c_m2.metric("♿ Acessíveis", sum(1 for v in vs if v.get('a')))
+            c_m3.metric("🕒 Relógio SPTrans", frota.get('hr', '--:--'))
 
-            # Mapa
+            # --- 3. MAPA DINÂMICO ---
             centro = [vs[0]['py'], vs[0]['px']] if vs else [-23.55, -46.63]
             m_f = folium.Map(location=centro, zoom_start=13, tiles='CartoDB positron')
             
-            # MARCADOR DO USUÁRIO (Vindo do GPS Global)
+            # Marcador do GPS Global (Vindo da Sidebar)
             if gps_global and gps_global.get('latitude'):
                 folium.Marker(
                     [gps_global['latitude'], gps_global['longitude']],
-                    popup="Você está aqui",
+                    popup="Minha Posição",
                     icon=folium.Icon(color='green', icon='user', prefix='fa')
                 ).add_to(m_f)
 
             if vs:
                 for v in vs:
-                    cor = 'blue' if v.get('a') else 'red'
+                    prefixo_atual = str(v['p'])
+                    
+                    # LÓGICA DE CORES:
+                    # Se for o prefixo que você buscou -> LARANJA (Destaque)
+                    # Se não, Azul (Acessível) ou Vermelho (Comum)
+                    if prefixo_alvo and prefixo_alvo in prefixo_atual:
+                        cor_icon = 'orange'
+                        peso = "bold"
+                        animacao = "pumping" # Alguns temas aceitam animação
+                    else:
+                        cor_icon = 'blue' if v.get('a') else 'red'
+                        peso = "normal"
+
                     folium.Marker(
                         [v['py'], v['px']],
-                        popup=f"Prefixo: {v['p']}<br>Sinal: {v.get('t', 'Real')}",
-                        icon=folium.Icon(color=cor, icon='bus', prefix='fa')
+                        # Tooltip aparece só de passar o mouse por cima (mais rápido que clicar)
+                        tooltip=f"Prefixo: {prefixo_atual}",
+                        popup=f"🚌 <b>Veículo {prefixo_atual}</b><br>Sinal: {v.get('t', 'Real')}",
+                        icon=folium.Icon(color=cor_icon, icon='bus', prefix='fa')
                     ).add_to(m_f)
+                
+                # Auto-ajuste de câmera para ver a frota toda
+                lats = [v['py'] for v in vs]
+                lons = [v['px'] for v in vs]
+                m_f.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
             
-            st_folium(m_f, width=1000, height=500, key="mapa_frota_v2")
+            st_folium(m_f, width=1000, height=500, key="mapa_frota_v2_final")
             
-            # Tabela de Dados (Raio-X)
+            # --- 4. TABELA DE RAIO-X COM BUSCA ---
             if vs:
-                st.markdown("### 📋 Raio-X da Frota")
-                # Criando a tabela usando o Pandas (pd)
+                st.markdown("### 📋 Detalhamento dos Veículos")
                 df = pd.DataFrame(vs)[['p', 't', 'a']]
                 df.columns = ['Prefixo', 'Último Sinal', 'Acessível']
                 df['Acessível'] = df['Acessível'].map({True: "✅ Sim", False: "❌ Não"})
+                
+                # Se você buscou um prefixo, a tabela filtra para te mostrar só ele
+                if prefixo_alvo:
+                    df = df[df['Prefixo'].astype(str).str.contains(prefixo_alvo)]
+                
                 st.dataframe(df, use_container_width=True, hide_index=True)
-        else: st.error("Linha não encontrada.")
+        else:
+            st.error("Linha não encontrada.")
 
 # ==========================================
 # ABA 3: PAINEL DO PONTO (UX PREMIUM)
