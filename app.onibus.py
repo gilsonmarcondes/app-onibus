@@ -200,101 +200,112 @@ with aba_rota:
 
 
 # ==========================================
-# ABA 2: MONITOR "OLHO DE ÁGUIA" (COM BUSCA POR PREFIXO)
+# ABA 2: MONITOR DE FROTA (CENTRO DE COMANDO)
 # ==========================================
 with aba_monitor:
     st.subheader("🚌 Monitor de Frota ao Vivo")
     
-    # --- 1. CONFIGURAÇÕES ---
+    # --- 1. CONFIGURAÇÕES E RADAR ---
     col_a, col_t = st.columns([7, 3])
     with col_a:
-        auto = st.checkbox("🔄 Radar Automático (30s)", value=False, key="check_auto_v2_final")
-        if auto: st_autorefresh(interval=30000, key="refresh_v2_final")
+        auto_v2 = st.checkbox("🔄 Radar Automático (30s)", value=False, key="check_auto_v2_definitivo")
+        if auto_v2: 
+            st_autorefresh(interval=30000, key="refresh_v2_definitivo")
     
-    # --- 2. BUSCA DE LINHA E DE PREFIXO ---
+    # --- 2. ENTRADA DE DADOS ---
     c_lin, c_pref = st.columns(2)
     with c_lin:
         lin_id = st.text_input("🔍 Linha (Número):", placeholder="Ex: 8000", key="in_lin_v2_final")
     with c_pref:
-        prefixo_alvo = st.text_input("🎯 Destacar Ônibus (Prefixo):", placeholder="Ex: 12345", key="in_pref_v2")
+        prefixo_alvo = st.text_input("🎯 Destacar Ônibus (Prefixo):", placeholder="Ex: 12345", key="in_pref_v2_final")
 
     if lin_id:
+        # Autenticação e Busca na SPTrans
         s_m = requests.Session()
         s_m.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
         res_l = s_m.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={lin_id}").json()
         
         if res_l:
             opcoes = {f"{l['lt']}-{l['tl']} | {l['tp']} ➔ {l['ts']}": l for l in res_l}
-            sel = st.selectbox("Sentido da Operação:", list(opcoes.keys()), key="sel_lin_v2_final")
-            l_sel = opcoes[sel]
+            sel_v2 = st.selectbox("Sentido da Operação:", list(opcoes.keys()), key="sel_lin_v2_final")
+            l_sel = opcoes[sel_v2]
             
-            # Posição dos ônibus
-            frota = s_m.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
-            vs = frota.get('vs', [])
+            # Puxando posições em tempo real
+            frota_res = s_m.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
+            vs = frota_res.get('vs', [])
             
-            # Dashboard de Operação
+            # --- 3. DASHBOARD DE MÉTRICAS ---
             st.divider()
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric("🚌 Frota na Rua", len(vs))
             c_m2.metric("♿ Acessíveis", sum(1 for v in vs if v.get('a')))
-            c_m3.metric("🕒 Relógio SPTrans", frota.get('hr', '--:--'))
+            c_m3.metric("🕒 Relógio SPTrans", frota_res.get('hr', '--:--'))
 
-            # --- 3. MAPA DINÂMICO ---
-            centro = [vs[0]['py'], vs[0]['px']] if vs else [-23.55, -46.63]
-            m_f = folium.Map(location=centro, zoom_start=13, tiles='CartoDB positron')
+            # --- 4. MAPA DE MONITORAMENTO ---
+            # Define o centro do mapa (frota ou centro de SP)
+            centro_mapa = [vs[0]['py'], vs[0]['px']] if vs else [-23.55, -46.63]
             
-            # Marcador do GPS Global (Vindo da Sidebar)
+            # Escolha automática do tema (Dia/Noite)
+            h_atual = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
+            tema_mapa = 'CartoDB dark_matter' if (h_atual >= 18 or h_atual < 6) else 'CartoDB positron'
+            
+            m_frota = folium.Map(location=centro_mapa, zoom_start=13, tiles=tema_mapa)
+            
+            # Marcador do seu GPS (Vindo da Sidebar)
             if gps_global and gps_global.get('latitude'):
                 folium.Marker(
                     [gps_global['latitude'], gps_global['longitude']],
-                    popup="Minha Posição",
+                    popup="Você está aqui",
                     icon=folium.Icon(color='green', icon='user', prefix='fa')
-                ).add_to(m_f)
+                ).add_to(m_frota)
 
             if vs:
+                lats, lons = [], []
                 for v in vs:
                     prefixo_atual = str(v['p'])
+                    lats.append(v['py']); lons.append(v['px'])
                     
-                    # LÓGICA DE CORES:
-                    # Se for o prefixo que você buscou -> LARANJA (Destaque)
-                    # Se não, Azul (Acessível) ou Vermelho (Comum)
+                    # Lógica de cores do monitor
                     if prefixo_alvo and prefixo_alvo in prefixo_atual:
-                        cor_icon = 'orange'
-                        peso = "bold"
-                        animacao = "pumping" # Alguns temas aceitam animação
+                        cor_icon = 'orange'  # Ônibus que você está procurando
                     else:
                         cor_icon = 'blue' if v.get('a') else 'red'
-                        peso = "normal"
 
                     folium.Marker(
                         [v['py'], v['px']],
-                        # Tooltip aparece só de passar o mouse por cima (mais rápido que clicar)
                         tooltip=f"Prefixo: {prefixo_atual}",
-                        popup=f"🚌 <b>Veículo {prefixo_atual}</b><br>Sinal: {v.get('t', 'Real')}",
+                        popup=f"🚌 <b>Veículo {prefixo_atual}</b><br>Sinal: {v.get('t', 'Real')}",
                         icon=folium.Icon(color=cor_icon, icon='bus', prefix='fa')
-                    ).add_to(m_f)
+                    ).add_to(m_frota)
                 
-                # Auto-ajuste de câmera para ver a frota toda
-                lats = [v['py'] for v in vs]
-                lons = [v['px'] for v in vs]
-                m_f.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+                # Ajusta o zoom automaticamente para abraçar todos os ônibus
+                m_frota.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
             
-            st_folium(m_f, width=1000, height=500, key="mapa_frota_v2_final")
+            st_folium(m_frota, width=1000, height=500, key="mapa_v2_final_corrigido")
             
-            # --- 4. TABELA DE RAIO-X COM BUSCA ---
+            # --- 5. RAIO-X DA FROTA (VERSÃO BLINDADA CONTRA ERROS) ---
+            st.markdown("### 📋 Detalhamento dos Veículos")
             if vs:
-                st.markdown("### 📋 Detalhamento dos Veículos")
-                df = pd.DataFrame(vs)[['p', 't', 'a']]
-                df.columns = ['Prefixo', 'Último Sinal', 'Acessível']
-                df['Acessível'] = df['Acessível'].map({True: "✅ Sim", False: "❌ Não"})
+                df_raw = pd.DataFrame(vs)
                 
-                # Se você buscou um prefixo, a tabela filtra para te mostrar só ele
+                # O reindex impede o KeyError se uma coluna sumir da API
+                df_view = df_raw.reindex(columns=['p', 't', 'a'], fill_value="N/D")
+                df_view.columns = ['Prefixo', 'Último Sinal', 'Acessível']
+                
+                # Formatação visual da acessibilidade
+                df_view['Acessível'] = df_view['Acessível'].apply(
+                    lambda x: "✅ Sim" if x is True else "❌ Não" if x is False else "N/D"
+                )
+                
+                # Se houver busca por prefixo, filtra a tabela também
                 if prefixo_alvo:
-                    df = df[df['Prefixo'].astype(str).str.contains(prefixo_alvo)]
+                    df_view = df_view[df_view['Prefixo'].astype(str).str.contains(prefixo_alvo)]
                 
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df_view, use_container_width=True, hide_index=True)
+            else:
+                st.info("Aguardando sinal dos veículos para listar a frota.")
         else:
-            st.error("Linha não encontrada.")
+            st.error("Linha não encontrada na base da SPTrans.")
 
 # ==========================================
 # ABA 3: PAINEL DO PONTO (CHEGADA EM TEMPO REAL)
