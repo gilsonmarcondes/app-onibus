@@ -6,7 +6,6 @@ import json
 import gzip
 from streamlit_geolocation import streamlit_geolocation
 import googlemaps
-import polyline
 from datetime import datetime
 import pytz
 from streamlit_autorefresh import st_autorefresh
