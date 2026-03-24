@@ -1,15 +1,13 @@
 import streamlit as st
+import pandas as pd  # <--- ESSA É A LINHA QUE ESTÁ FALTANDO!
 import requests
 import folium
 from streamlit_folium import st_folium
-import json
-import gzip
-from streamlit_geolocation import streamlit_geolocation
-import googlemaps
 from datetime import datetime
 import pytz
 from streamlit_autorefresh import st_autorefresh
-import xml.etree.ElementTree as ET 
+from streamlit_geolocation import streamlit_geolocation
+from folium.plugins import LocateControl
 
 # --- CONFIGURAÇÃO INICIAL ---
 st.set_page_config(page_title="D23 Mobilidade", layout="wide")
@@ -258,9 +256,10 @@ with aba_monitor:
             
             st_folium(m_f, width=1000, height=500, key="mapa_frota_v2")
             
-            # Tabela de Dados
+            # Tabela de Dados (Raio-X)
             if vs:
                 st.markdown("### 📋 Raio-X da Frota")
+                # Criando a tabela usando o Pandas (pd)
                 df = pd.DataFrame(vs)[['p', 't', 'a']]
                 df.columns = ['Prefixo', 'Último Sinal', 'Acessível']
                 df['Acessível'] = df['Acessível'].map({True: "✅ Sim", False: "❌ Não"})
