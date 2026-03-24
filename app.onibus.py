@@ -245,7 +245,7 @@ with aba_monitor:
         else: st.error("Linha não encontrada.")
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO
+# ABA 3: PAINEL DO PONTO (CORRIGIDA)
 # ==========================================
 with aba_ponto:
     st.subheader("🚏 Painel de Chegada")
@@ -254,37 +254,45 @@ with aba_ponto:
     with col_b: termo_ponto = st.text_input("🔍 Buscar ponto (Rua ou Código):", placeholder="Ex: Av. Paulista")
     with col_f:
         so_acessivel = st.toggle("♿ Apenas Acessíveis", value=False)
-        if st.checkbox("🔄 Atualizar Painel (30s)", value=True): st_autorefresh(interval=30000, key="refresh_ponto")
+        if st.checkbox("🔄 Atualizar Painel (30s)", value=True): 
+            st_autorefresh(interval=30000, key="refresh_ponto")
 
     s_p = requests.Session()
     s_p.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
     ponto_selecionado = None
 
-    if not termo_ponto and gps_global and gps_global.get('latitude'):
-        lat_u, lon_u = gps_global['latitude'], gps_global['longitude']
-        pontos_prox = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/BuscarParadasProximas?lat={lat_u}&lon={lon_u}&raio=500").json()
-        if pontos_prox:
-            dict_prox = {f"{p['np']} ({p['ed']}) - {int(calcular_distancia(lat_u, lon_u, p['py'], p['px']))}m": p for p in pontos_prox}
-            ponto_selecionado = dict_prox[st.selectbox("📍 Pontos perto de você:", list(dict_prox.keys()))]
-            
-    elif termo_ponto:
+    if termo_ponto:
         pontos_busca = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={termo_ponto}").json()
-        if pontos_busca:
-            dict_busca = {f"{p['np']} ({p['ed']})": p for p in pontos_busca}
-            ponto_selecionado = dict_busca[st.selectbox("Selecione o ponto:", list(dict_busca.keys()))]
+        
+        # Blindagem: Só continua se a SPTrans devolver uma lista real de pontos
+        if isinstance(pontos_busca, list) and len(pontos_busca) > 0:
+            dict_busca = {}
+            for p in pontos_busca:
+                nome_format = f"{p['np']} ({p['ed']})"
+                
+                # Se o GPS estiver ligado, calcula a distância e coloca no nome
+                if gps_global and gps_global.get('latitude'):
+                    dist = calcular_distancia(gps_global['latitude'], gps_global['longitude'], p['py'], p['px'])
+                    nome_format += f" 🚶 a {int(dist)}m"
+                    
+                dict_busca[nome_format] = p
+                
+            ponto_selecionado = dict_busca[st.selectbox("Selecione o ponto exato:", list(dict_busca.keys()))]
+        else:
+            st.warning("Nenhum ponto encontrado. Tente outro nome ou código.")
+    else:
+        st.info("Digite o nome de uma rua (ex: Augusta) ou o código do ponto para começar.")
 
     if ponto_selecionado:
         cp = ponto_selecionado['cp']
-        if gps_global and gps_global.get('latitude'):
-            dist = calcular_distancia(gps_global['latitude'], gps_global['longitude'], ponto_selecionado['py'], ponto_selecionado['px'])
-            st.write(f"🚶 Distância até o ponto: **{int(dist)} metros**.")
 
-        with st.spinner("Consultando cronômetro..."):
+        with st.spinner("Consultando cronômetro da SPTrans..."):
             previsao = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={cp}").json()
         
         if previsao and 'p' in previsao:
             linhas = previsao['p'].get('l', [])
-            if not linhas: st.warning("Nenhum ônibus a caminho no momento.")
+            if not linhas: 
+                st.warning("Nenhum ônibus a caminho no momento.")
             else:
                 for lin in linhas:
                     vs_filt = [v for v in lin['vs'] if not so_acessivel or v.get('a')]
@@ -303,19 +311,23 @@ with aba_ponto:
                                 if perto:
                                     st.error(f"⏱️ {tempo}")
                                     st.caption("Corre que está vindo!")
-                                else: st.subheader(f"⏱️ {tempo}")
+                                else: 
+                                    st.subheader(f"⏱️ {tempo}")
 
                 st.divider()
                 st.markdown("### 🗺️ Radar do Ponto")
                 m_v3 = folium.Map(location=[ponto_selecionado['py'], ponto_selecionado['px']], zoom_start=16, tiles='CartoDB positron')
-                folium.Marker([ponto_selecionado['py'], ponto_selecionado['px']], icon=folium.Icon(color='darkblue', icon='map-pin', prefix='fa')).add_to(m_v3)
+                
+                folium.Marker([ponto_selecionado['py'], ponto_selecionado['px']], icon=folium.Icon(color='darkblue', icon='map-pin', prefix='fa'), popup="Ponto").add_to(m_v3)
+                
                 if gps_global and gps_global.get('latitude'):
-                    folium.Marker([gps_global['latitude'], gps_global['longitude']], icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m_v3)
+                    folium.Marker([gps_global['latitude'], gps_global['longitude']], icon=folium.Icon(color='green', icon='user', prefix='fa'), popup="Você").add_to(m_v3)
                 
                 for lin in linhas:
                     for v in lin['vs']:
                         folium.Marker([v['py'], v['px']], popup=f"Linha {lin['c']}", icon=folium.Icon(color='orange', icon='bus', prefix='fa')).add_to(m_v3)
-                st_folium(m_v3, width=1000, height=400, key="mapa_ponto_final")
+                
+                st_folium(m_v3, width=1000, height=400, key="mapa_ponto_final_corrigido")
 
 # ==========================================
 # ABA 4: LONDRES (EM BREVE)
