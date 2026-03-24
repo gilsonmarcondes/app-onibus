@@ -275,8 +275,10 @@ with aba_rota:
             st.warning("Por favor, preencha a origem e o destino antes de buscar.")
 
 # ==========================================
-# ABA 2: O MONITOR CLÁSSICO (DASHBOARD PREMIUM)
+# ABA 2: O MONITOR CLÁSSICO (COM GPS AO VIVO)
 # ==========================================
+from folium.plugins import LocateControl  # <-- A MÁGICA DO GPS ESTÁ AQUI
+
 with aba_monitor:
     st.subheader("🚌 Monitor de Frota ao Vivo")
     st.write("Visão panorâmica e raio-x completo da operação da linha.")
@@ -316,7 +318,7 @@ with aba_monitor:
             st.divider()
             
             if qtd_onibus > 0:
-                # --- 1. HUD: DASHBOARD DE MÉTRICAS ---
+                # --- HUD: DASHBOARD DE MÉTRICAS ---
                 qtd_acessiveis = sum(1 for v in frota_manual['vs'] if v.get('a'))
                 hora_atualizacao = frota_manual.get('hr', 'N/D')
                 
@@ -325,39 +327,43 @@ with aba_monitor:
                 col_m2.metric("♿ Frota Acessível", f"{qtd_acessiveis} de {qtd_onibus}")
                 col_m3.metric("⏱️ Última Atualização", hora_atualizacao)
                 
-                # --- 2. CÂMERA INTELIGENTE (Calculando o centro dinâmico) ---
                 lats = [v['py'] for v in frota_manual['vs']]
                 lons = [v['px'] for v in frota_manual['vs']]
                 centro_mapa = [sum(lats) / len(lats), sum(lons) / len(lons)]
             else:
                 st.warning("Nenhum ônibus desta linha operando neste sentido no momento.")
-                centro_mapa = [-23.5505, -46.6333] # Centro de SP padrão se não houver frota
+                centro_mapa = [-23.5505, -46.6333]
 
             try:
-                # Mudança de cor do mapa (Claro de dia, Escuro à noite)
                 hora_atual_sp = datetime.now(pytz.timezone('America/Sao_Paulo')).hour
                 tema_mapa_classico = 'CartoDB dark_matter' if (hora_atual_sp >= 18 or hora_atual_sp < 6) else 'CartoDB positron'
             except:
                 tema_mapa_classico = 'CartoDB positron'
 
+            # Criando o mapa
             m_manual = folium.Map(location=centro_mapa, zoom_start=13, tiles=tema_mapa_classico)
 
-            # Traça a linha vermelha do percurso se você tiver o arquivo GTFS carregado
+            # --- O BOTÃO DE GPS DO USUÁRIO ---
+            LocateControl(
+                position="bottomright",
+                drawCircle=False, # Não desenha aquele círculo azul gigante em volta, só o ponto
+                showPopup=False,
+                strings={"title": "Encontrar minha localização atual"}
+            ).add_to(m_manual)
+
+            # Traça a linha vermelha do percurso
             chave_gtfs = f"{linha_sel.get('lt')}-{linha_sel.get('tl')}-{linha_sel.get('sl')}"
             if 'trajetos_sp' in globals() and chave_gtfs in trajetos_sp:
                 folium.PolyLine(trajetos_sp[chave_gtfs], color="#FF0000", weight=4, opacity=0.7).add_to(m_manual)
 
             if qtd_onibus > 0:
-                # Ajustando as bordas do mapa para abraçar todos os pontos extremos
                 sw = [min(lats), min(lons)]
                 ne = [max(lats), max(lons)]
                 m_manual.fit_bounds([sw, ne])
                 
                 for v in frota_manual['vs']:
                     acessivel_str = "♿ Sim" if v.get('a') else "❌ Não"
-                    
-                    # --- 3. POP-UP RICO EM HTML ---
-                    # Usa o .get() para não travar se a prefeitura não enviar o horário
+                    # Usando .get() para evitar o KeyError de novo
                     horario_sinal = v.get('t', v.get('ta', 'Tempo Real')) 
                     
                     html_popup = f"""
@@ -381,7 +387,6 @@ with aba_monitor:
                     st.rerun()
         else:
             st.error("Linha não encontrada na base da SPTrans. Verifique o número digitado.")
-
 
 # ==========================================
 # ABA 3: PAINEL DO PONTO (UX PREMIUM)
