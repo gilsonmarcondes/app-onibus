@@ -239,7 +239,8 @@ with aba_monitor:
     with col_gps_manual:
         # Botão de GPS para você se localizar no mapa da frota
         st.write("Sua posição:")
-        meu_gps_aba2 = streamlit_geolocation()
+        # Adicionamos uma 'key' única para este botão não brigar com o da Aba 1
+        meu_gps_aba2 = streamlit_geolocation(key="gps_da_aba_2_monitor")
 
     # --- 2. BUSCA DA LINHA ---
     linha_busca = st.text_input("🔍 Digite a linha (ex: 6500, 8000):", placeholder="6500", key="search_aba2")
