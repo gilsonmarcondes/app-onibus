@@ -14,12 +14,11 @@ from streamlit_geolocation import streamlit_geolocation
 # ==========================================
 # 1. CONFIGURAÇÕES E CHAVES (COFRE SEGURO)
 # ==========================================
-# Lembre-se: as chaves reais ficam no "Secrets" do Streamlit Cloud!
 TOKEN_SPTRANS = st.secrets.get("TOKEN_SPTRANS", "")
 CHAVE_GOOGLE = st.secrets.get("CHAVE_GOOGLE", "")
 CHAVE_CLIMA = st.secrets.get("CHAVE_CLIMA", "")
 
-# Chaves do Reino Unido (Preparação)
+# Chaves do Reino Unido (Preparação para Aba 4)
 CHAVE_TFL = st.secrets.get("CHAVE_TFL", "")
 CHAVE_BODS = st.secrets.get("CHAVE_BODS", "")
 CHAVE_SCOTLAND = st.secrets.get("CHAVE_SCOTLAND", "")
@@ -62,7 +61,6 @@ def decode_poly(p):
 def calcular_distancia(lat1, lon1, lat2, lon2):
     return math.sqrt((lat1 - lat2)**2 + (lon1 - lon2)**2) * 111320
 
-# Carregar arquivo trajetos.json (DNA das linhas) para a Aba 2
 @st.cache_data
 def carregar_trajetos():
     if os.path.exists("trajetos.json"):
@@ -73,43 +71,39 @@ def carregar_trajetos():
 dados_trajetos = carregar_trajetos()
 
 # ==========================================
-# 3. BARRA LATERAL (GPS GLOBAL E CLIMA)
+# 3. BARRA LATERAL (GPS E CLIMA)
 # ==========================================
 with st.sidebar:
     st.header("🌦️ Central de Status")
-    
-    st.write("Sua Posição (GPS):")
+    st.write("A sua Posição (GPS):")
     gps_global = streamlit_geolocation()
     
     if gps_global and gps_global.get('latitude'):
         lat, lon = gps_global['latitude'], gps_global['longitude']
         st.success("📍 Satélite Conectado")
-        
         try:
             url_clima = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
             clima = requests.get(url_clima).json()['current_weather']
             icones = {0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 45: "🌫️", 51: "🌧️", 61: "🌧️", 71: "❄️", 95: "⚡"}
             icone_atual = icones.get(clima['weathercode'], "🌡️")
             st.metric("Clima Local", f"{icone_atual} {clima['temperature']}°C")
-            if clima['weathercode'] >= 51: 
-                st.warning("☔ Possibilidade de chuva detectada.")
         except:
             st.caption("🌤️ Clima indisponível no momento.")
     else:
         st.warning("📍 Ative o GPS para previsões locais.")
     
     st.divider()
-    st.caption("BusRadar Pro v3.0 - Modo Moovit")
+    st.caption("BusRadar Pro v3.1")
 
 # ==========================================
 # 4. SISTEMA DE ABAS
 # ==========================================
 aba_rota, aba_monitor, aba_ponto, aba_londres = st.tabs([
-    "🗺️ Planejador de Rotas", "🚌 Monitor de Frota", "🚏 Painel do Ponto", "🇬🇧 Londres (Em Breve)"
+    "🗺️ Planeador de Rotas", "🚌 Monitor de Frota", "🚏 Painel da Paragem", "🇬🇧 Londres (Em Breve)"
 ])
 
 # ==========================================
-# ABA 1: PLANEJADOR DE ROTAS
+# ABA 1: PLANEADOR DE ROTAS
 # ==========================================
 with aba_rota:
     st.subheader("Traçar Nova Viagem")
@@ -117,33 +111,32 @@ with aba_rota:
 
     c1, c2 = st.columns(2)
     with c1:
-        modo_v = st.radio("Modo de Viagem:", ["🚌 Transporte Público", "🚗 Carro", "🚶 A Pé"], horizontal=True)
-        tipo_origem = st.radio("Origem:", ["🌍 Usar meu GPS", "⌨️ Digitar Endereço"], horizontal=True)
+        modo_v = st.radio("Modo de Viagem:", ["🚌 Transportes Públicos", "🚗 Carro", "🚶 A Pé"], horizontal=True)
+        tipo_origem = st.radio("Origem:", ["🌍 Usar o meu GPS", "⌨️ Digitar Morada"], horizontal=True)
     with c2:
-        criterio = st.selectbox("Prioridade:", ["⚡ Mais Rápida", "🔄 Menos Baldeações", "🚶 Menos Caminhada"])
+        criterio = st.selectbox("Prioridade:", ["⚡ Mais Rápida", "🔄 Menos Transbordos", "🚶 Menos Caminhada"])
         destino_v = st.text_input("Destino Final:", placeholder="Ex: Parque Ibirapuera")
 
     origem_final = None
-    if tipo_origem == "🌍 Usar meu GPS":
+    if tipo_origem == "🌍 Usar o meu GPS":
         if gps_global and gps_global.get('latitude'):
             origem_final = f"{gps_global['latitude']},{gps_global['longitude']}"
         else: st.warning("⚠️ Ative o GPS na barra lateral primeiro.")
     else:
-        origem_final = st.text_input("Endereço de partida:", placeholder="Ex: Av. Paulista, 1500")
+        origem_final = st.text_input("Morada de partida:", placeholder="Ex: Av. Paulista, 1500")
 
     if st.button("🚀 Buscar Melhores Rotas", type="primary"):
         if origem_final and destino_v and CHAVE_GOOGLE:
-            with st.spinner("Calculando rotas e tarifas..."):
-                dt_obj = datetime.now()
-                ts = int(dt_obj.timestamp())
-                m_g = {"🚌 Transporte Público": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}[modo_v]
-                url_rota = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem_final}&destination={destino_v}&mode={m_g}&departure_time={ts}&alternatives=true&language=pt-BR&key={CHAVE_GOOGLE}"
+            with st.spinner("A calcular rotas e tarifas..."):
+                ts = int(datetime.now().timestamp())
+                m_g = {"🚌 Transportes Públicos": "transit", "🚗 Carro": "driving", "🚶 A Pé": "walking"}[modo_v]
+                url_rota = f"https://maps.googleapis.com/maps/api/directions/json?origin={origem_final}&destination={destino_v}&mode={m_g}&departure_time={ts}&alternatives=true&language=pt-PT&key={CHAVE_GOOGLE}"
                 res = requests.get(url_rota).json()
                 
                 if res['status'] == 'OK': st.session_state['resultado_busca'] = res['routes']
                 else: st.error("Rota não encontrada.")
         elif not CHAVE_GOOGLE:
-            st.error("Chave do Google Maps não configurada no st.secrets.")
+            st.error("Chave do Google Maps não configurada.")
         else:
             st.warning("Preencha a origem e o destino.")
 
@@ -196,7 +189,9 @@ with aba_monitor:
             for l in res_l:
                 origem = l['tp'] if l['sl'] == 1 else l['ts']
                 destino = l['ts'] if l['sl'] == 1 else l['tp']
-                nome_opcao = f"{l['c']} | {origem} ➔ {destino} (Sentido {l['sl']})"
+                
+                # CORREÇÃO AQUI: Usando 'lt' e 'tl' para construir o nome da opção
+                nome_opcao = f"{l['lt']}-{l['tl']} | {origem} ➔ {destino} (Sentido {l['sl']})"
                 opcoes[nome_opcao] = l
                 
             l_sel = opcoes[st.selectbox("Sentido da Operação:", list(opcoes.keys()))]
@@ -213,13 +208,13 @@ with aba_monitor:
             centro_mapa = [vs[0]['py'], vs[0]['px']] if vs else [-23.55, -46.63]
             m_frota = folium.Map(location=centro_mapa, zoom_start=13, tiles='CartoDB positron')
             
-            # --- INTEGRAÇÃO DO TRAJETOS.JSON (O DNA DA LINHA) ---
-            chave_json = f"{l_sel['c']}-{l_sel['sl']}"
+            # CORREÇÃO DA CHAVE JSON: Montando exatamente no formato '8000-10-1'
+            chave_json = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl']}"
             if chave_json in dados_trajetos:
                 rota_oficial = dados_trajetos[chave_json]
                 folium.PolyLine(rota_oficial, color="#00A1FF", weight=5, opacity=0.7, tooltip="Trajeto Oficial").add_to(m_frota)
             else:
-                st.caption(f"Trajeto oficial ({chave_json}) não encontrado no arquivo JSON local.")
+                st.caption(f"Trajeto oficial ({chave_json}) não encontrado no ficheiro JSON.")
 
             if gps_global and gps_global.get('latitude'):
                 folium.Marker([gps_global['latitude'], gps_global['longitude']], popup="Você", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m_frota)
@@ -240,17 +235,16 @@ with aba_monitor:
         else: st.error("Linha não encontrada.")
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO (MODO MOOVIT)
+# ABA 3: PAINEL DA PARAGEM (MODO MOOVIT)
 # ==========================================
 with aba_ponto:
     st.subheader("🚏 Painel de Chegada")
     
     col_b, col_f = st.columns([6, 4])
-    with col_b: termo_ponto = st.text_input("🔍 Buscar ponto (Rua ou Código):", placeholder="Ex: Av. Paulista")
+    with col_b: termo_ponto = st.text_input("🔍 Buscar paragem (Rua ou Código):", placeholder="Ex: Av. Paulista")
     with col_f:
         so_acessivel = st.toggle("♿ Apenas Acessíveis", value=False)
-        if st.checkbox("🔄 Atualizar Painel (30s)", value=True): 
-            st_autorefresh(interval=30000, key="refresh_ponto")
+        if st.checkbox("🔄 Atualizar Painel (30s)", value=True): st_autorefresh(interval=30000, key="refresh_ponto")
 
     if TOKEN_SPTRANS:
         s_p = requests.Session()
@@ -267,21 +261,21 @@ with aba_ponto:
                         dist = calcular_distancia(gps_global['latitude'], gps_global['longitude'], p['py'], p['px'])
                         nome_format += f" 🚶 a {int(dist)}m"
                     dict_busca[nome_format] = p
-                ponto_selecionado = dict_busca[st.selectbox("Selecione o ponto exato:", list(dict_busca.keys()))]
-            else: st.warning("Nenhum ponto encontrado. Tente outro nome ou código.")
+                ponto_selecionado = dict_busca[st.selectbox("Selecione a paragem exata:", list(dict_busca.keys()))]
+            else: st.warning("Nenhuma paragem encontrada.")
         else:
-            st.info("Digite o nome de uma rua (ex: Augusta) ou o código do ponto para começar.")
+            st.info("Digite o nome de uma rua ou código da paragem.")
 
         if ponto_selecionado:
             cp = ponto_selecionado['cp']
 
-            with st.spinner("Consultando cronômetro da SPTrans..."):
+            with st.spinner("A consultar cronómetro..."):
                 previsao = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={cp}").json()
             
             if previsao and 'p' in previsao:
                 linhas = previsao['p'].get('l', [])
                 if not linhas: 
-                    st.warning("Nenhum ônibus a caminho no momento.")
+                    st.warning("Nenhum autocarro a caminho no momento.")
                 else:
                     st.markdown("### 🚍 Próximas Chegadas")
                     for lin in linhas:
@@ -315,9 +309,9 @@ with aba_ponto:
                             """, unsafe_allow_html=True)
 
                     st.markdown("<br>", unsafe_allow_html=True)
-                    st.markdown("### 🗺️ Radar do Ponto")
+                    st.markdown("### 🗺️ Radar da Paragem")
                     m_v3 = folium.Map(location=[ponto_selecionado['py'], ponto_selecionado['px']], zoom_start=16, tiles='CartoDB positron')
-                    folium.Marker([ponto_selecionado['py'], ponto_selecionado['px']], icon=folium.Icon(color='darkblue', icon='map-pin', prefix='fa'), popup="Ponto").add_to(m_v3)
+                    folium.Marker([ponto_selecionado['py'], ponto_selecionado['px']], icon=folium.Icon(color='darkblue', icon='map-pin', prefix='fa'), popup="Paragem").add_to(m_v3)
                     if gps_global and gps_global.get('latitude'): folium.Marker([gps_global['latitude'], gps_global['longitude']], icon=folium.Icon(color='green', icon='user', prefix='fa'), popup="Você").add_to(m_v3)
                     
                     for lin in linhas:
@@ -330,5 +324,5 @@ with aba_ponto:
 # ABA 4: LONDRES (EM BREVE)
 # ==========================================
 with aba_londres:
-    st.title("🇬🇧 Preparando os motores...")
+    st.title("🇬🇧 A preparar os motores...")
     st.info("A integração com a TfL (Transport for London) será construída aqui em breve.")
