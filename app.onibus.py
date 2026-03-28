@@ -63,13 +63,16 @@ def calcular_distancia(lat1, lon1, lat2, lon2):
 @st.cache_data
 def carregar_json(nome_arquivo):
     if os.path.exists(nome_arquivo):
-        with open(nome_arquivo, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+        try:
+            with open(nome_arquivo, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.decoder.JSONDecodeError:
+            # Proteção: Se o ficheiro estiver corrompido, devolve vazio em vez de travar
+            return [] if nome_arquivo == "paradas.json" else {}
+    return [] if nome_arquivo == "paradas.json" else {}
 
 dados_trajetos = carregar_json("trajetos.json")
-# Carrega a base estática de paradas
-dados_paradas = carregar_json("paradas.json") if isinstance(carregar_json("paradas.json"), list) else []
+dados_paradas = carregar_json("paradas.json")
 
 # ==========================================
 # 3. BARRA LATERAL (GPS E CLIMA)
@@ -94,7 +97,7 @@ with st.sidebar:
         st.warning("📍 Ative o GPS para previsões locais.")
     
     st.divider()
-    st.caption("BusRadar Pro v4.0 - Radar de Área")
+    st.caption("BusRadar Pro v4.1 - Seguro")
 
 # ==========================================
 # 4. SISTEMA DE ABAS
@@ -207,12 +210,13 @@ with aba_monitor:
             centro_mapa = [vs[0]['py'], vs[0]['px']] if vs else [-23.55, -46.63]
             m_frota = folium.Map(location=centro_mapa, zoom_start=13, tiles='CartoDB positron')
             
-            chave_json = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl']}"
-            if chave_json in dados_trajetos:
-                rota_oficial = dados_trajetos[chave_json]
-                folium.PolyLine(rota_oficial, color="#00A1FF", weight=5, opacity=0.7, tooltip="Trajeto Oficial").add_to(m_frota)
-            else:
-                st.caption(f"Trajeto oficial ({chave_json}) não encontrado no ficheiro JSON.")
+            if isinstance(dados_trajetos, dict):
+                chave_json = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl']}"
+                if chave_json in dados_trajetos:
+                    rota_oficial = dados_trajetos[chave_json]
+                    folium.PolyLine(rota_oficial, color="#00A1FF", weight=5, opacity=0.7, tooltip="Trajeto Oficial").add_to(m_frota)
+                else:
+                    st.caption(f"Trajeto oficial não encontrado no ficheiro JSON.")
 
             if gps_global and gps_global.get('latitude'):
                 folium.Marker([gps_global['latitude'], gps_global['longitude']], popup="Você", icon=folium.Icon(color='green', icon='user', prefix='fa')).add_to(m_frota)
@@ -247,11 +251,10 @@ with aba_ponto:
         s_p = requests.Session()
         s_p.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
         
-        # MODO AUTOMÁTICO (GPS)
-        if gps_global and gps_global.get('latitude') and dados_paradas:
+        # Se tiver o GPS e o ficheiro de paragens estiver a funcionar
+        if gps_global and gps_global.get('latitude') and isinstance(dados_paradas, list) and len(dados_paradas) > 0:
             lat_u, lon_u = gps_global['latitude'], gps_global['longitude']
             
-            # 1. Encontrar as 5 paradas mais próximas num raio de 400m
             paradas_perto = []
             for p in dados_paradas:
                 dist = calcular_distancia(lat_u, lon_u, p['py'], p['px'])
@@ -262,12 +265,10 @@ with aba_ponto:
             paradas_perto = sorted(paradas_perto, key=lambda x: x['dist'])[:5]
 
             if paradas_perto:
-                st.success(f"📡 Monitorizando {len(paradas_perto)} paragens à sua volta.")
-                
-                todas_previsoes = {} # Dicionário para agrupar as linhas e evitar duplicados
+                st.success(f"📡 A monitorizar {len(paradas_perto)} paragens à sua volta.")
+                todas_previsoes = {} 
                 
                 with st.spinner("A sondar autocarros na região..."):
-                    # 2. Consultar cada parada próxima
                     for p in paradas_perto:
                         prev = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={p['cp']}").json()
                         if prev and 'p' in prev and 'l' in prev['p']:
@@ -275,11 +276,9 @@ with aba_ponto:
                                 vs_filt = [v for v in lin['vs'] if not so_acessivel or v.get('a')]
                                 if vs_filt:
                                     chave_linha = f"{lin['c']} | {lin['lt0']} ➔ {lin['lt1']}"
-                                    # Calcula os minutos do veículo mais próximo
                                     t_str = vs_filt[0]['t']
                                     minutos = int(''.join(filter(str.isdigit, str(t_str))) or 999) if "min" in str(t_str).lower() else 999
                                     
-                                    # Se a linha já existe no dicionário, atualiza só se o tempo for menor
                                     if chave_linha not in todas_previsoes or minutos < todas_previsoes[chave_linha]['minutos']:
                                         todas_previsoes[chave_linha] = {
                                             "linha": lin,
@@ -288,10 +287,8 @@ with aba_ponto:
                                             "nome_ponto": f"{p['np']} ({p['dist']}m)"
                                         }
 
-                # 3. Exibir os resultados agrupados
                 if todas_previsoes:
-                    st.markdown("### 🚍 Entrando na sua área:")
-                    # Ordenar pelas que chegam mais rápido
+                    st.markdown("### 🚍 A entrar na sua área:")
                     linhas_ordenadas = sorted(todas_previsoes.values(), key=lambda x: x['minutos'])
                     
                     for info in linhas_ordenadas:
@@ -326,9 +323,11 @@ with aba_ponto:
             else:
                 st.info("Nenhuma paragem encontrada num raio de 400m do seu GPS.")
                 
-        # MODO MANUAL (Fallback se não tiver GPS ou paradas.json)
+        # MODO MANUAL (Se não houver GPS ou o ficheiro paradas.json estiver vazio/com erro)
         else:
-            st.info("⚠️ GPS inativo ou 'paradas.json' não encontrado. Usando busca manual.")
+            if not isinstance(dados_paradas, list) or len(dados_paradas) == 0:
+                st.warning("⚠️ O ficheiro 'paradas.json' não foi carregado corretamente. A usar o modo manual.")
+            
             termo_ponto = st.text_input("🔍 Buscar paragem (Rua ou Código):", placeholder="Ex: Av. Paulista")
             if termo_ponto:
                 pontos_busca = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={termo_ponto}").json()
@@ -337,9 +336,44 @@ with aba_ponto:
                     ponto_selecionado = dict_busca[st.selectbox("Selecione a paragem:", list(dict_busca.keys()))]
                     
                     if ponto_selecionado:
-                        # ... (O código anterior da busca manual continuaria aqui, mas para manter leve, 
-                        # encorajamos o uso do GPS que agora é o foco principal).
-                        st.write(f"Paragem selecionada: {ponto_selecionado['np']}. Para previsões automáticas, faça upload do paradas.json.")
+                        cp = ponto_selecionado['cp']
+                        with st.spinner("A consultar cronómetro da SPTrans..."):
+                            previsao = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={cp}").json()
+                        
+                        if previsao and 'p' in previsao:
+                            linhas = previsao['p'].get('l', [])
+                            if not linhas: 
+                                st.warning("Nenhum autocarro a caminho no momento.")
+                            else:
+                                st.markdown("### 🚍 Próximas Chegadas")
+                                for lin in linhas:
+                                    vs_filt = [v for v in lin['vs'] if not so_acessivel or v.get('a')]
+                                    if vs_filt:
+                                        v_prox = vs_filt[0]
+                                        v_segundo = vs_filt[1] if len(vs_filt) > 1 else None
+                                        
+                                        def formatar_tempo(t_str):
+                                            if "min" in str(t_str).lower():
+                                                min_val = int(''.join(filter(str.isdigit, str(t_str))) or 0)
+                                                if min_val <= 5: return f"🟢 {t_str}", "#d4edda", "#155724" 
+                                                elif min_val <= 10: return f"🟡 {t_str}", "#fff3cd", "#856404" 
+                                                else: return f"⚪ {t_str}", "#e2e3e5", "#383d41" 
+                                            else: return f"⏰ {t_str}", "#dce4ec", "#004a99"
+
+                                        texto1, bg1, cor1 = formatar_tempo(v_prox['t'])
+                                        html_badge1 = f"<span style='background-color: {bg1}; color: {cor1}; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 14px;'>{texto1} (Prefixo: {v_prox['p']}) {'♿' if v_prox.get('a') else ''}</span>"
+                                        html_badge2 = f"<span style='color: #6c757d; font-size: 13px; margin-left: 10px;'>Próximo: {v_segundo['t']}</span>" if v_segundo else ""
+
+                                        st.markdown(f"""
+                                        <div style="margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+                                            <div style="font-size: 15px; font-weight: bold; margin-bottom: 4px; color: #333;">
+                                                🚌 {lin['c']} <span style="font-weight: normal; color: #555;">| {lin['lt0']} ➔ {lin['lt1']}</span>
+                                            </div>
+                                            <div>{html_badge1}{html_badge2}</div>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                else:
+                    st.warning("Nenhuma paragem encontrada com esse nome.")
 
 # ==========================================
 # ABA 4: LONDRES (EM BREVE)
