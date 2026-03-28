@@ -11,16 +11,20 @@ from streamlit_geolocation import streamlit_geolocation
 from folium.plugins import LocateControl
 import googlemaps
 
-# --- AS SUAS CHAVES DE ACESSO ---
-TOKEN_SPTRANS = '0ff07fb8ed51fd939f51e92b03571a51fb72aad64fc19586909fd97ac1b6091a'
-CHAVE_GOOGLE = 'AIzaSyAtp5jarrnwyy3_JWVfoWGbKlfEd4NjSKk' 
-CHAVE_CLIMA = '1fb1b9310c7e1e3192d52f5821b0c1ab'
+# ==========================================
+# 1. CONFIGURAÇÕES E CHAVES (COFRE SEGURO)
+# ==========================================
 
-# --- AS CHAVES INTERNACIONAIS ---
-CHAVE_TFL = 'd4fcd31a062a4b1dab6ea40cf1896241'           
-CHAVE_BODS = '76765b7adeb5b7e231139229df66db24b94a12d7' # <-- Sua chave do interior da Inglaterra
-CHAVE_SCOTLAND = 'CHAVE_TRAVELINE_AQUI'                  
-CHAVE_RAIL = 'CHAVE_DARWIN_AQUI' 
+# --- AS SUAS CHAVES DE ACESSO (SÃO PAULO E CLIMA) ---
+TOKEN_SPTRANS = st.secrets["TOKEN_SPTRANS"]
+CHAVE_GOOGLE = st.secrets["CHAVE_GOOGLE"]
+CHAVE_CLIMA = st.secrets["CHAVE_CLIMA"]
+
+# --- AS CHAVES INTERNACIONAIS (REINO UNIDO) ---
+CHAVE_TFL = st.secrets["CHAVE_TFL"]
+CHAVE_BODS = st.secrets["CHAVE_BODS"]
+CHAVE_SCOTLAND = st.secrets["CHAVE_SCOTLAND"]
+CHAVE_RAIL = st.secrets["CHAVE_RAIL"]
 
 # ==========================================
 # 2. DESIGN PREMIUM (CSS) E CONFIGURAÇÃO DA PÁGINA
@@ -334,4 +338,5 @@ with aba_ponto:
 # ==========================================
 with aba_londres:
     st.title("🇬🇧 Preparando os motores...")
+
     st.info("A integração com a TfL (Transport for London) será construída aqui.")
