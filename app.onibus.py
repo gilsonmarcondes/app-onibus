@@ -96,7 +96,7 @@ with st.sidebar:
         st.warning("📍 Ative o GPS para previsões locais.")
     
     st.divider()
-    st.caption("BusRadar Pro v4.2 - Radar Flexível")
+    st.caption("BusRadar Pro v4.3 - Advanced")
 
 # ==========================================
 # 4. SISTEMA DE ABAS
@@ -206,6 +206,14 @@ with aba_monitor:
             c_m2.metric("♿ Acessíveis", sum(1 for v in vs if v.get('a')))
             c_m3.metric("🕒 Atualizado", frota_res.get('hr', '--:--'))
 
+            # NOVIDADE ABA 2: DROP DOWN COM A LISTA DE TODOS OS VEÍCULOS NA RUA
+            if vs:
+                with st.expander(f"📋 Ver lista detalhada dos {len(vs)} veículos em circulação"):
+                    for v in vs:
+                        txt_acess = "♿ Sim" if v.get('a') else "❌ Não"
+                        sinal = v.get('t', 'N/A')
+                        st.write(f"**Prefixo: {v['p']}** | Acessível: {txt_acess} | Último Sinal GPS: **{sinal}**")
+
             centro_mapa = [vs[0]['py'], vs[0]['px']] if vs else [-23.55, -46.63]
             m_frota = folium.Map(location=centro_mapa, zoom_start=13, tiles='CartoDB positron')
             
@@ -250,14 +258,49 @@ with aba_ponto:
         s_p = requests.Session()
         s_p.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
         
-        # Se tiver o GPS e o ficheiro de paragens estiver a funcionar
+        # Função auxiliar para desenhar o bloco da Aba 3 com ou sem Dropdown
+        def renderizar_bloco_onibus(lin, vs_filt, local_info=""):
+            v_prox = vs_filt[0]
+            v_segundo = vs_filt[1] if len(vs_filt) > 1 else None
+            
+            def formatar_tempo(t_str):
+                if "min" in str(t_str).lower():
+                    min_val = int(''.join(filter(str.isdigit, str(t_str))) or 0)
+                    if min_val <= 5: return f"🟢 {t_str}", "#d4edda", "#155724" 
+                    elif min_val <= 10: return f"🟡 {t_str}", "#fff3cd", "#856404" 
+                    else: return f"⚪ {t_str}", "#e2e3e5", "#383d41" 
+                else: return f"⏰ {t_str}", "#dce4ec", "#004a99"
+
+            texto1, bg1, cor1 = formatar_tempo(v_prox['t'])
+            html_badge1 = f"<span style='background-color: {bg1}; color: {cor1}; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 14px;'>{texto1} (Prefixo: {v_prox['p']}) {'♿' if v_prox.get('a') else ''}</span>"
+            html_badge2 = f"<span style='color: #6c757d; font-size: 13px; margin-left: 10px;'>Próximo: {v_segundo['t']}</span>" if v_segundo else ""
+            html_local = f"<span style='color: #004a99; font-size: 12px; margin-left: 10px;'>{local_info}</span>" if local_info else ""
+
+            st.markdown(f"""
+            <div style="margin-bottom: 4px;">
+                <div style="font-size: 15px; font-weight: bold; margin-bottom: 4px; color: #333;">
+                    🚌 {lin['c']} <span style="font-weight: normal; color: #555;">| {lin['lt0']} ➔ {lin['lt1']}</span>
+                </div>
+                <div>{html_badge1}{html_badge2}{html_local}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # NOVIDADE ABA 3: DROP DOWN PARA O 3º, 4º E 5º AUTOCARRO DA FILA
+            if len(vs_filt) > 2:
+                with st.expander(f"🔽 Ver mais {len(vs_filt)-2} autocarros nesta linha"):
+                    for v_extra in vs_filt[2:]:
+                        txt_extra, _, _ = formatar_tempo(v_extra['t'])
+                        st.write(f"- **{txt_extra}** (Prefixo: {v_extra['p']}) {'♿' if v_extra.get('a') else ''}")
+            
+            st.markdown("<hr style='margin-top: 10px; margin-bottom: 15px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
+
+        # MODO AUTOMÁTICO
         if gps_global and gps_global.get('latitude') and isinstance(dados_paradas, list) and len(dados_paradas) > 0:
             lat_u, lon_u = gps_global['latitude'], gps_global['longitude']
             
             paradas_perto = []
             for p in dados_paradas:
                 if isinstance(p, dict):
-                    # TENTA LER NO FORMATO SPTRANS OU NO FORMATO GTFS ORIGINAL
                     lat_p = p.get('py') or p.get('stop_lat')
                     lon_p = p.get('px') or p.get('stop_lon')
                     id_p = p.get('cp') or p.get('stop_id')
@@ -266,11 +309,7 @@ with aba_ponto:
                     if lat_p and lon_p and id_p:
                         dist = calcular_distancia(lat_u, lon_u, float(lat_p), float(lon_p))
                         if dist <= 400:
-                            paradas_perto.append({
-                                'cp': str(id_p), 
-                                'np': str(nome_p), 
-                                'dist': int(dist)
-                            })
+                            paradas_perto.append({'cp': str(id_p), 'np': str(nome_p), 'dist': int(dist)})
             
             paradas_perto = sorted(paradas_perto, key=lambda x: x['dist'])[:5]
 
@@ -294,46 +333,20 @@ with aba_ponto:
                                             "linha": lin,
                                             "veiculos": vs_filt,
                                             "minutos": minutos,
-                                            "nome_ponto": f"{p['np']} ({p['dist']}m)"
+                                            "nome_ponto": f"📍 {p['np']} ({p['dist']}m)"
                                         }
 
                 if todas_previsoes:
                     st.markdown("### 🚍 A entrar na sua área:")
                     linhas_ordenadas = sorted(todas_previsoes.values(), key=lambda x: x['minutos'])
-                    
                     for info in linhas_ordenadas:
-                        lin = info["linha"]
-                        vs_filt = info["veiculos"]
-                        v_prox = vs_filt[0]
-                        v_segundo = vs_filt[1] if len(vs_filt) > 1 else None
-                        
-                        def formatar_tempo(t_str):
-                            if "min" in str(t_str).lower():
-                                min_val = int(''.join(filter(str.isdigit, str(t_str))) or 0)
-                                if min_val <= 5: return f"🟢 {t_str}", "#d4edda", "#155724" 
-                                elif min_val <= 10: return f"🟡 {t_str}", "#fff3cd", "#856404" 
-                                else: return f"⚪ {t_str}", "#e2e3e5", "#383d41" 
-                            else: return f"⏰ {t_str}", "#dce4ec", "#004a99"
-
-                        texto1, bg1, cor1 = formatar_tempo(v_prox['t'])
-                        html_badge1 = f"<span style='background-color: {bg1}; color: {cor1}; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 14px;'>{texto1} (Prefixo: {v_prox['p']}) {'♿' if v_prox.get('a') else ''}</span>"
-                        html_badge2 = f"<span style='color: #6c757d; font-size: 13px; margin-left: 10px;'>Próximo: {v_segundo['t']}</span>" if v_segundo else ""
-                        html_local = f"<span style='color: #004a99; font-size: 12px; margin-left: 10px;'>📍 {info['nome_ponto']}</span>"
-
-                        st.markdown(f"""
-                        <div style="margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
-                            <div style="font-size: 15px; font-weight: bold; margin-bottom: 4px; color: #333;">
-                                🚌 {lin['c']} <span style="font-weight: normal; color: #555;">| {lin['lt0']} ➔ {lin['lt1']}</span>
-                            </div>
-                            <div>{html_badge1}{html_badge2}{html_local}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        renderizar_bloco_onibus(info["linha"], info["veiculos"], info["nome_ponto"])
                 else:
                     st.warning("Nenhum autocarro a caminho das paragens ao seu redor.")
             else:
                 st.info("Nenhuma paragem encontrada num raio de 400m do seu GPS.")
                 
-        # MODO MANUAL (Se não houver GPS ou o ficheiro paradas.json estiver vazio/com erro)
+        # MODO MANUAL
         else:
             if not isinstance(dados_paradas, list) or len(dados_paradas) == 0:
                 st.warning("⚠️ O ficheiro 'paradas.json' não foi carregado corretamente. A usar o modo manual.")
@@ -350,7 +363,7 @@ with aba_ponto:
                         with st.spinner("A consultar cronómetro da SPTrans..."):
                             previsao = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={cp}").json()
                         
-                        if previsao and 'p' in previsao:
+                        if previsao and previsao.get('p') and isinstance(previsao['p'], dict) and 'l' in previsao['p']:
                             linhas = previsao['p'].get('l', [])
                             if not linhas: 
                                 st.warning("Nenhum autocarro a caminho no momento.")
@@ -359,29 +372,7 @@ with aba_ponto:
                                 for lin in linhas:
                                     vs_filt = [v for v in lin['vs'] if not so_acessivel or v.get('a')]
                                     if vs_filt:
-                                        v_prox = vs_filt[0]
-                                        v_segundo = vs_filt[1] if len(vs_filt) > 1 else None
-                                        
-                                        def formatar_tempo(t_str):
-                                            if "min" in str(t_str).lower():
-                                                min_val = int(''.join(filter(str.isdigit, str(t_str))) or 0)
-                                                if min_val <= 5: return f"🟢 {t_str}", "#d4edda", "#155724" 
-                                                elif min_val <= 10: return f"🟡 {t_str}", "#fff3cd", "#856404" 
-                                                else: return f"⚪ {t_str}", "#e2e3e5", "#383d41" 
-                                            else: return f"⏰ {t_str}", "#dce4ec", "#004a99"
-
-                                        texto1, bg1, cor1 = formatar_tempo(v_prox['t'])
-                                        html_badge1 = f"<span style='background-color: {bg1}; color: {cor1}; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 14px;'>{texto1} (Prefixo: {v_prox['p']}) {'♿' if v_prox.get('a') else ''}</span>"
-                                        html_badge2 = f"<span style='color: #6c757d; font-size: 13px; margin-left: 10px;'>Próximo: {v_segundo['t']}</span>" if v_segundo else ""
-
-                                        st.markdown(f"""
-                                        <div style="margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
-                                            <div style="font-size: 15px; font-weight: bold; margin-bottom: 4px; color: #333;">
-                                                🚌 {lin['c']} <span style="font-weight: normal; color: #555;">| {lin['lt0']} ➔ {lin['lt1']}</span>
-                                            </div>
-                                            <div>{html_badge1}{html_badge2}</div>
-                                        </div>
-                                        """, unsafe_allow_html=True)
+                                        renderizar_bloco_onibus(lin, vs_filt)
                 else:
                     st.warning("Nenhuma paragem encontrada com esse nome.")
 
