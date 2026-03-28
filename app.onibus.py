@@ -67,7 +67,6 @@ def carregar_json(nome_arquivo):
             with open(nome_arquivo, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.decoder.JSONDecodeError:
-            # Proteção: Se o ficheiro estiver corrompido, devolve vazio em vez de travar
             return [] if nome_arquivo == "paradas.json" else {}
     return [] if nome_arquivo == "paradas.json" else {}
 
@@ -97,7 +96,7 @@ with st.sidebar:
         st.warning("📍 Ative o GPS para previsões locais.")
     
     st.divider()
-    st.caption("BusRadar Pro v4.1 - Seguro")
+    st.caption("BusRadar Pro v4.2 - Radar Flexível")
 
 # ==========================================
 # 4. SISTEMA DE ABAS
@@ -257,10 +256,21 @@ with aba_ponto:
             
             paradas_perto = []
             for p in dados_paradas:
-                dist = calcular_distancia(lat_u, lon_u, p['py'], p['px'])
-                if dist <= 400:
-                    p['dist'] = int(dist)
-                    paradas_perto.append(p)
+                if isinstance(p, dict):
+                    # TENTA LER NO FORMATO SPTRANS OU NO FORMATO GTFS ORIGINAL
+                    lat_p = p.get('py') or p.get('stop_lat')
+                    lon_p = p.get('px') or p.get('stop_lon')
+                    id_p = p.get('cp') or p.get('stop_id')
+                    nome_p = p.get('np') or p.get('stop_name', 'Paragem sem nome')
+                    
+                    if lat_p and lon_p and id_p:
+                        dist = calcular_distancia(lat_u, lon_u, float(lat_p), float(lon_p))
+                        if dist <= 400:
+                            paradas_perto.append({
+                                'cp': str(id_p), 
+                                'np': str(nome_p), 
+                                'dist': int(dist)
+                            })
             
             paradas_perto = sorted(paradas_perto, key=lambda x: x['dist'])[:5]
 
