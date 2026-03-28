@@ -281,7 +281,7 @@ with aba_ponto:
                 with st.spinner("A sondar autocarros na região..."):
                     for p in paradas_perto:
                         prev = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={p['cp']}").json()
-                        if prev and 'p' in prev and 'l' in prev['p']:
+                        if prev and prev.get('p') and isinstance(prev['p'], dict) and 'l' in prev['p']:
                             for lin in prev['p']['l']:
                                 vs_filt = [v for v in lin['vs'] if not so_acessivel or v.get('a')]
                                 if vs_filt:
