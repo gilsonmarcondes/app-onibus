@@ -11,26 +11,22 @@ from streamlit_autorefresh import st_autorefresh
 from streamlit_geolocation import streamlit_geolocation
 
 # ==========================================
-# 1. CONFIGURAÇÕES E CHAVES
+# 1. CONFIGURAÇÕES
 # ==========================================
 TOKEN_SPTRANS = st.secrets.get("TOKEN_SPTRANS", "")
 CHAVE_GOOGLE = st.secrets.get("CHAVE_GOOGLE", "")
 
 st.set_page_config(page_title="BusRadar Pro", layout="wide", page_icon="🚌")
 
+# CSS para pílulas e layout
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { border-radius: 8px; height: 3em; background-color: #004a99; color: white; font-weight: bold; width: 100%; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 12px; border: 1px solid #eee; }
-    .horario-pills { display: inline-block; background-color: #e9ecef; border-radius: 5px; padding: 2px 8px; margin: 2px; font-size: 11px; color: #333; border: 1px solid #dee2e6; font-family: monospace; }
+    .stButton>button { border-radius: 8px; background-color: #004a99; color: white; font-weight: bold; width: 100%; }
+    .horario-pills { display: inline-block; background-color: #f1f3f5; border-radius: 4px; padding: 2px 6px; margin: 2px; font-size: 11px; border: 1px solid #dee2e6; font-family: monospace; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNÇÕES ---
-def calcular_distancia(lat1, lon1, lat2, lon2):
-    return math.sqrt((lat1 - lat2)**2 + (lon1 - lon2)**2) * 111320
-
+# --- FUNÇÕES AUXILIARES ---
 def decode_poly(p):
     index, lat, lng = 0, 0, 0
     coords = []
@@ -52,21 +48,19 @@ def decode_poly(p):
 @st.cache_data
 def carregar_json(nome_arquivo):
     if os.path.exists(nome_arquivo):
-        try:
-            with open(nome_arquivo, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
+        with open(nome_arquivo, "r", encoding="utf-8") as f: return json.load(f)
     return {}
 
 dados_trajetos = carregar_json("trajetos.json")
 dados_paradas = carregar_json("paradas.json")
 dados_horarios = carregar_json("horarios.json")
 
-# --- GPS SIDEBAR ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🌦️ Status")
     gps = streamlit_geolocation()
     if gps and gps.get('latitude'): st.success("📍 GPS Ativo")
-    st.caption("BusRadar Pro v4.7")
+    st.caption("BusRadar Pro v4.8")
 
 aba_rota, aba_monitor, aba_ponto, aba_londres = st.tabs(["🗺️ Planeador", "🚌 Monitor", "📍 Radar", "🇬🇧 Londres"])
 
@@ -76,29 +70,29 @@ aba_rota, aba_monitor, aba_ponto, aba_londres = st.tabs(["🗺️ Planeador", "�
 with aba_rota:
     st.subheader("Traçar Viagem")
     c1, c2 = st.columns(2)
-    with c1: destino_v = st.text_input("Destino:", placeholder="Ex: Metrô Ana Rosa")
-    with c2: modo_v = st.selectbox("Modo:", ["transit", "walking", "driving"])
+    with c1: dest = st.text_input("Para onde?", placeholder="Ex: Parque Ibirapuera", key="dest_v48")
+    with c2: modo = st.selectbox("Transporte:", ["transit", "walking", "driving"], key="modo_v48")
     
-    if st.button("🚀 Buscar Rota", type="primary"):
-        if gps and gps.get('latitude') and destino_v and CHAVE_GOOGLE:
-            url = f"https://maps.googleapis.com/maps/api/directions/json?origin={gps['latitude']},{gps['longitude']}&destination={destino_v}&mode={modo_v}&language=pt-PT&key={CHAVE_GOOGLE}"
-            res = requests.get(url).json()
-            if res['status'] == 'OK':
-                r = res['routes'][0]
-                lg = r['legs'][0]
-                st.success(f"Tempo: {lg['duration']['text']} | Distância: {lg['distance']['text']}")
-                
-                pts = decode_poly(r['overview_polyline']['points'])
-                m = folium.Map(location=pts[0], zoom_start=14)
-                folium.PolyLine(pts, color="blue", weight=5).add_to(m)
-                st_folium(m, width=1000, height=400, key="mapa_rota_v47")
-            else: st.error("Erro ao buscar rota.")
+    if st.button("🚀 Ver Rota", key="btn_rota"):
+        if gps and gps.get('latitude') and dest and CHAVE_GOOGLE:
+            with st.spinner("Calculando..."):
+                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={gps['latitude']},{gps['longitude']}&destination={dest}&mode={modo}&language=pt-BR&key={CHAVE_GOOGLE}"
+                res = requests.get(url).json()
+                if res['status'] == 'OK':
+                    r = res['routes'][0]
+                    lg = r['legs'][0]
+                    st.info(f"🏁 {lg['duration']['text']} ({lg['distance']['text']})")
+                    pts = decode_poly(r['overview_polyline']['points'])
+                    m = folium.Map(location=pts[0], zoom_start=14)
+                    folium.PolyLine(pts, color="#004a99", weight=5).add_to(m)
+                    st_folium(m, width=1000, height=400)
+                else: st.error("Rota não encontrada.")
 
 # ==========================================
 # ABA 2: MONITOR + HORÁRIOS (CORRIGIDA)
 # ==========================================
 with aba_monitor:
-    lin_id = st.text_input("🔍 Linha (ex: 675A):", key="mon_lin")
+    lin_id = st.text_input("🔍 Buscar Linha:", key="mon_lin_v48")
     if lin_id and TOKEN_SPTRANS:
         s = requests.Session()
         s.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
@@ -107,40 +101,43 @@ with aba_monitor:
             opcoes = {f"{l['lt']}-{l['tl']} | {l['tp']} ➔ {l['ts']}": l for l in linhas}
             l_sel = opcoes[st.selectbox("Sentido:", list(opcoes.keys()))]
             
-            # Quadro de Horários
-            sentido_gtfs = str(l_sel['sl'] - 1)
-            chave_h = f"{l_sel['lt']}-{l_sel['tl']}-{sentido_gtfs}"
+            # --- LÓGICA DE HORÁRIOS CORRIGIDA ---
+            # A chave agora usa o route_id (lt-tl) + direction_id (sl-1)
+            chave_h = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl'] - 1}"
             
             if chave_h in dados_horarios:
                 with st.expander("📅 Quadro de Horários Oficial"):
                     prog = dados_horarios[chave_h]
-                    c_u, c_s, c_d = st.columns(3)
-                    for col, dia, label in zip([c_u, c_s, c_d], ["Útil", "Sábado", "Domingo"], ["📅 Úteis", "🌅 Sábados", "⛪ Domingos"]):
+                    cols = st.columns(3)
+                    for col, dia, tit in zip(cols, ["Útil", "Sábado", "Domingo"], ["📅 Úteis", "🌅 Sábados", "⛪ Domingos"]):
                         with col:
-                            st.markdown(f"**{label}**")
-                            h_list = prog.get(dia, [])
-                            if h_list: st.markdown("".join([f'<span class="horario-pills">{h}</span>' for h in h_list]), unsafe_allow_html=True)
+                            st.markdown(f"**{tit}**")
+                            lista = prog.get(dia, [])
+                            if lista: 
+                                html = "".join([f'<span class="horario-pills">{h}</span>' for h in lista])
+                                st.markdown(html, unsafe_allow_html=True)
                             else: st.caption("Sem dados")
-            
+            else:
+                st.caption(f"Quadro não encontrado para chave: {chave_h}")
+
             # Mapa em tempo real
             pos = s.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
             vs = pos.get('vs', [])
             if vs:
-                st.metric("🚌 Frota na Rua", len(vs))
+                st.metric("🚌 Frota", len(vs))
                 m_f = folium.Map(location=[vs[0]['py'], vs[0]['px']], zoom_start=13)
                 for v in vs: folium.Marker([v['py'], v['px']], icon=folium.Icon(color='blue', icon='bus', prefix='fa')).add_to(m_f)
-                st_folium(m_f, width=1000, height=400, key="mapa_mon")
+                st_folium(m_f, width=1000, height=400)
+        else: st.error("Linha não encontrada.")
 
 # ==========================================
-# ABA 3: RADAR (SIMPLIFICADO)
+# ABA 3: RADAR
 # ==========================================
 with aba_ponto:
     st.subheader("📍 Radar de Área")
     if gps and gps.get('latitude') and dados_paradas:
-        st_autorefresh(interval=30000, key="auto_radar")
-        # (Lógica de busca de paradas próximas aqui)
-        st.info("Monitorizando paragens num raio de 400m...")
+        st.info("Buscando paradas próximas (400m)...")
 
 with aba_londres:
     st.title("🇬🇧 Londres")
-    st.write("Em breve.")
+    st.write("Pronto para a Maratona?")
