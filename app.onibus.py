@@ -14,22 +14,21 @@ import googlemaps
 # ==========================================
 # 1. CONFIGURAÇÕES E CHAVES (COFRE SEGURO)
 # ==========================================
-
 # --- AS SUAS CHAVES DE ACESSO (SÃO PAULO E CLIMA) ---
 TOKEN_SPTRANS = st.secrets["TOKEN_SPTRANS"]
 CHAVE_GOOGLE = st.secrets["CHAVE_GOOGLE"]
-CHAVE_CLIMA = st.secrets["CHAVE_CLIMA"]
+CHAVE_CLIMA = st.secrets.get("CHAVE_CLIMA", "") # Usando get para evitar erro se não existir ainda
 
 # --- AS CHAVES INTERNACIONAIS (REINO UNIDO) ---
-CHAVE_TFL = st.secrets["CHAVE_TFL"]
-CHAVE_BODS = st.secrets["CHAVE_BODS"]
-CHAVE_SCOTLAND = st.secrets["CHAVE_SCOTLAND"]
-CHAVE_RAIL = st.secrets["CHAVE_RAIL"]
+CHAVE_TFL = st.secrets.get("CHAVE_TFL", "")
+CHAVE_BODS = st.secrets.get("CHAVE_BODS", "")
+CHAVE_SCOTLAND = st.secrets.get("CHAVE_SCOTLAND", "")
+CHAVE_RAIL = st.secrets.get("CHAVE_RAIL", "")
 
 # ==========================================
 # 2. DESIGN PREMIUM (CSS) E CONFIGURAÇÃO DA PÁGINA
 # ==========================================
-st.set_page_config(page_title="BusRadar Pro - SP", layout="wide", page_icon="🚌")
+st.set_page_config(page_title="BusRadar Pro", layout="wide", page_icon="🚌")
 
 st.markdown("""
     <style>
@@ -41,7 +40,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Função auxiliar para decodificar a linha do mapa (Aba 1)
+# --- FUNÇÕES AUXILIARES ---
 def decode_poly(p):
     index, lat, lng = 0, 0, 0
     coords = []
@@ -60,7 +59,6 @@ def decode_poly(p):
         coords.append([lat/100000.0, lng/100000.0])
     return coords
 
-# Função auxiliar para calcular distância (Aba 3)
 def calcular_distancia(lat1, lon1, lat2, lon2):
     return math.sqrt((lat1 - lat2)**2 + (lon1 - lon2)**2) * 111320
 
@@ -145,12 +143,10 @@ with aba_rota:
         else:
             st.warning("Preencha a origem e o destino.")
 
-    # Exibição de Rotas Salvas na Memória
     if st.session_state['resultado_busca']:
         for i, r in enumerate(st.session_state['resultado_busca']):
             lg = r['legs'][0]
             
-            # Cálculo de Tarifa
             custo = sum(4.40 for p in lg['steps'] if p['travel_mode'] == "TRANSIT")
             custo = min(custo, 7.65) if custo > 0 else 0
             txt_custo = f" | 💰 Est. R$ {custo:.2f}" if custo > 0 else " | 🚶 Grátis"
@@ -164,7 +160,6 @@ with aba_rota:
                             n_lin = p.get('transit_details', {}).get('line', {}).get('short_name', "Bus")
                             st.info(f"🚌 **Linha {n_lin}**\n\n{inst}")
                             
-                            # Tenta puxar o radar da SPTrans para essa linha
                             try:
                                 s_st = requests.Session()
                                 s_st.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
@@ -206,7 +201,14 @@ with aba_monitor:
         res_l = s_m.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={lin_id}").json()
         
         if res_l:
-            opcoes = {f"{l['lt']}-{l['tl']} | {l['tp']} ➔ {l['ts']}": l for l in res_l}
+            # CORREÇÃO: Lê o 'sl' (sentido) para garantir que Ida e Volta apareçam
+            opcoes = {}
+            for l in res_l:
+                origem = l['tp'] if l['sl'] == 1 else l['ts']
+                destino = l['ts'] if l['sl'] == 1 else l['tp']
+                nome_opcao = f"{l['lt']}-{l['tl']} | {origem} ➔ {destino}"
+                opcoes[nome_opcao] = l
+                
             l_sel = opcoes[st.selectbox("Sentido da Operação:", list(opcoes.keys()))]
             
             frota_res = s_m.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
@@ -249,7 +251,7 @@ with aba_monitor:
         else: st.error("Linha não encontrada.")
 
 # ==========================================
-# ABA 3: PAINEL DO PONTO (CORRIGIDA)
+# ABA 3: PAINEL DO PONTO
 # ==========================================
 with aba_ponto:
     st.subheader("🚏 Painel de Chegada")
@@ -268,17 +270,13 @@ with aba_ponto:
     if termo_ponto:
         pontos_busca = s_p.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Parada/Buscar?termosBusca={termo_ponto}").json()
         
-        # Blindagem: Só continua se a SPTrans devolver uma lista real de pontos
         if isinstance(pontos_busca, list) and len(pontos_busca) > 0:
             dict_busca = {}
             for p in pontos_busca:
                 nome_format = f"{p['np']} ({p['ed']})"
-                
-                # Se o GPS estiver ligado, calcula a distância e coloca no nome
                 if gps_global and gps_global.get('latitude'):
                     dist = calcular_distancia(gps_global['latitude'], gps_global['longitude'], p['py'], p['px'])
                     nome_format += f" 🚶 a {int(dist)}m"
-                    
                 dict_busca[nome_format] = p
                 
             ponto_selecionado = dict_busca[st.selectbox("Selecione o ponto exato:", list(dict_busca.keys()))]
@@ -338,5 +336,4 @@ with aba_ponto:
 # ==========================================
 with aba_londres:
     st.title("🇬🇧 Preparando os motores...")
-
-    st.info("A integração com a TfL (Transport for London) será construída aqui.")
+    st.info("A integração com a TfL (Transport for London) será construída aqui em breve.")
