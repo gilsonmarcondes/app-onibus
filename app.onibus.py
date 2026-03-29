@@ -810,20 +810,30 @@ with aba_ponto:
                             timeout=8
                         ).json()
 
-                        linhas = prev.get('p', {}).get('l', []) if prev else []
+                        # Extração defensiva: a API pode retornar None, lista ou dict
+                        linhas = []
+                        if isinstance(prev, dict):
+                            p_val = prev.get('p')
+                            if isinstance(p_val, dict):
+                                linhas = p_val.get('l') or []
+                            elif isinstance(p_val, list):
+                                linhas = p_val  # alguns endpoints retornam lista direto
+
                         if linhas:
                             for lin in linhas:
-                                vs_prev = lin.get('vs', [])
+                                if not isinstance(lin, dict):
+                                    continue
+                                vs_prev = lin.get('vs') or []
                                 if vs_prev:
                                     chegada = vs_prev[0].get('t', '?')
                                     prefixo = vs_prev[0].get('p', '?')
                                     st.write(
-                                        f"🚌 **Linha {lin['c']}** — chegada prevista: `{chegada}` "
+                                        f"🚌 **Linha {lin.get('c', '?')}** — chegada prevista: `{chegada}` "
                                         f"(prefixo {prefixo})"
                                     )
                         else:
                             st.caption("Sem ônibus a caminho deste ponto agora.")
-                    except requests.RequestException:
+                    except (requests.RequestException, ValueError):
                         st.caption("⚠️ Falha ao consultar previsões para esta parada.")
 
 # ==========================================
