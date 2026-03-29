@@ -675,60 +675,105 @@ with aba_monitor:
             if not res_l:
                 st.warning("Nenhuma linha encontrada. Verifique o número digitado.")
             else:
-                opcoes = {
-                    f"{l['lt']}-{l['tl']} | {l['tp']} ➔ {l['ts']}": l
-                    for l in res_l
-                }
-                l_sel = opcoes[st.selectbox("Selecione o sentido:", list(opcoes.keys()))]
+                # Agrupa as linhas encontradas por número (lt), separando os sentidos
+                # A API retorna uma entrada por sentido (sl=1 e sl=2)
+                # Mostramos TODOS os sentidos no mesmo mapa — sem forçar escolha
 
-                with st.spinner("Buscando posição da frota..."):
-                    frota_res = sessao.get(
-                        f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}",
-                        timeout=8
-                    ).json()
+                # Checkboxes para selecionar quais sentidos exibir
+                st.markdown("**Sentidos disponíveis — selecione os que deseja ver:**")
+                sentidos_cols = st.columns(min(len(res_l), 4))
+                sentidos_ativos = {}
+                for i, l in enumerate(res_l):
+                    label = f"{l['lt']}-{l['tl']} · {l['tp']} ➔ {l['ts']}"
+                    with sentidos_cols[i % len(sentidos_cols)]:
+                        ativo = st.checkbox(label, value=True, key=f"sentido_{l['cl']}")
+                    sentidos_ativos[l['cl']] = (ativo, l)
 
-                vs = frota_res.get('vs', [])
+                linhas_ativas = [(cl, l) for cl, (ativo, l) in sentidos_ativos.items() if ativo]
 
-                if vs:
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("🚌 Frota na Rua", len(vs))
-                    m2.metric("♿ Acessíveis", sum(1 for v in vs if v.get('a')))
-                    m3.metric("🚫 Não Acessíveis", sum(1 for v in vs if not v.get('a')))
-                    m4.metric("🕒 Atualizado", frota_res.get('hr', '—'))
-
-                    m_f = folium.Map(
-                        location=[vs[0]['py'], vs[0]['px']],
-                        zoom_start=13,
-                        tiles='CartoDB Positron'
-                    )
-
-                    # Trajeto oficial (bug fix: agora carrega o .gz corretamente)
-                    chave_t = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl']}"
-                    if chave_t in dados_trajetos:
-                        folium.PolyLine(
-                            dados_trajetos[chave_t],
-                            color="#00A1FF", weight=4, opacity=0.6,
-                            tooltip="Trajeto oficial"
-                        ).add_to(m_f)
-
-                    # Ícones diferenciados: acessível (azul) vs não acessível (laranja)
-                    for v in vs:
-                        cor = 'blue' if v.get('a') else 'orange'
-                        folium.Marker(
-                            [v['py'], v['px']],
-                            popup=folium.Popup(
-                                f"<b>Prefixo:</b> {v['p']}<br>"
-                                f"<b>Acessível:</b> {'Sim' if v.get('a') else 'Não'}",
-                                max_width=200
-                            ),
-                            icon=folium.Icon(color=cor, icon='bus', prefix='fa')
-                        ).add_to(m_f)
-
-                    # Legenda simples
-                    st.caption("🔵 Acessível  🟠 Não acessível")
-                    st_folium(m_f, width=1000, height=480, key="mapa_monitor")
+                if not linhas_ativas:
+                    st.info("Selecione pelo menos um sentido para ver a frota.")
                 else:
-                    st.info("Nenhum ônibus detectado para esta linha no momento.")
+                    # Cores por sentido: azul para sentido 1, verde para sentido 2, roxo para demais
+                    paleta_sentido = ["blue", "green", "purple", "red"]
+                    paleta_trajeto = ["#0066cc", "#16a34a", "#7c3aed", "#dc2626"]
+
+                    todos_vs = []       # todos os ônibus de todos os sentidos ativos
+                    total_acessiveis = 0
+                    hr_atualizacao = "—"
+                    primeiro_vs = None
+
+                    with st.spinner("Buscando posição da frota..."):
+                        frota_por_sentido = {}
+                        for idx_s, (cl, l) in enumerate(linhas_ativas):
+                            try:
+                                frota_res = sessao.get(
+                                    f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={cl}",
+                                    timeout=8
+                                ).json()
+                                vs_s = frota_res.get('vs') or []
+                                frota_por_sentido[cl] = (vs_s, l, idx_s, frota_res.get('hr', '—'))
+                                todos_vs.extend(vs_s)
+                                total_acessiveis += sum(1 for v in vs_s if v.get('a'))
+                                if vs_s and primeiro_vs is None:
+                                    primeiro_vs = vs_s[0]
+                                hr_atualizacao = frota_res.get('hr', hr_atualizacao)
+                            except requests.RequestException:
+                                st.warning(f"Falha ao buscar sentido {l.get('tp')} ➔ {l.get('ts')}")
+
+                    # Métricas consolidadas
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("🚌 Total na Rua", len(todos_vs))
+                    m2.metric("♿ Acessíveis", total_acessiveis)
+                    m3.metric("🚫 Não Acessíveis", len(todos_vs) - total_acessiveis)
+                    m4.metric("🕒 Atualizado", hr_atualizacao)
+
+                    if not todos_vs:
+                        st.info("Nenhum ônibus detectado nos sentidos selecionados.")
+                    else:
+                        centro = [primeiro_vs['py'], primeiro_vs['px']]
+                        m_f = folium.Map(location=centro, zoom_start=13, tiles='CartoDB Positron')
+
+                        # Plota cada sentido com sua cor
+                        for cl, (vs_s, l, idx_s, _) in frota_por_sentido.items():
+                            cor_bus = paleta_sentido[idx_s % len(paleta_sentido)]
+                            cor_traj = paleta_trajeto[idx_s % len(paleta_trajeto)]
+                            nome_sentido = f"{l['tp']} ➔ {l['ts']}"
+
+                            # Trajeto oficial no mapa
+                            chave_t = f"{l['lt']}-{l['tl']}-{l['sl']}"
+                            if chave_t in dados_trajetos:
+                                folium.PolyLine(
+                                    dados_trajetos[chave_t],
+                                    color=cor_traj, weight=4, opacity=0.55,
+                                    tooltip=f"Trajeto: {nome_sentido}"
+                                ).add_to(m_f)
+
+                            # Ônibus do sentido
+                            for v in vs_s:
+                                cor_icon = cor_bus if v.get('a') else 'orange'
+                                folium.Marker(
+                                    [v['py'], v['px']],
+                                    popup=folium.Popup(
+                                        f"<b>Sentido:</b> {nome_sentido}<br>"
+                                        f"<b>Prefixo:</b> {v['p']}<br>"
+                                        f"<b>Acessível:</b> {'Sim' if v.get('a') else 'Não'}",
+                                        max_width=220
+                                    ),
+                                    icon=folium.Icon(color=cor_icon, icon='bus', prefix='fa'),
+                                    tooltip=f"{nome_sentido} · {v['p']}"
+                                ).add_to(m_f)
+
+                        # Legenda dinâmica
+                        legenda_items = []
+                        icones_cor = {"blue": "🔵", "green": "🟢", "purple":"🟣", "red":"🔴"}
+                        for cl, (vs_s, l, idx_s, _) in frota_por_sentido.items():
+                            emoji = icones_cor.get(paleta_sentido[idx_s % len(paleta_sentido)], "⚫")
+                            legenda_items.append(f"{emoji} {l['tp']} ➔ {l['ts']} ({len(vs_s)} ônibus)")
+                        legenda_items.append("🟠 = não acessível (qualquer sentido)")
+                        st.caption("  ·  ".join(legenda_items))
+
+                        st_folium(m_f, width=1000, height=480, key="mapa_monitor")
 
         except requests.RequestException as e:
             st.error(f"Falha de conexão com a API SPTrans: {e}")
