@@ -392,32 +392,45 @@ with aba_rota:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── MODO DE TRANSPORTE (chips visuais via radio) ──────────────
+    # ── MODO DE TRANSPORTE (multi-select com checkboxes) ─────────
     st.markdown("**Modo de transporte**")
-    modos_opcoes = {
-        "🚌 Ônibus": "BUS",
-        "🚇 Metrô": "SUBWAY",
-        "🚆 Trem": "TRAIN",
-        "🚊 VLT/Tram": "TRAM",
-        "🚶 A pé": "WALKING",
-        "🚗 Carro": "DRIVING",
-    }
-    modo_sel = st.radio(
-        "modo", list(modos_opcoes.keys()),
-        horizontal=True, key="modo_transporte", label_visibility="collapsed"
-    )
-    modo_api_val = modos_opcoes[modo_sel]
+    st.caption("Selecione um ou mais meios — rotas que combinem os marcados serão consideradas.")
 
-    # Mapeia para o que a API aceita
-    if modo_api_val in ("BUS", "SUBWAY", "TRAIN", "TRAM"):
+    transit_opcoes = {"🚌 Ônibus": "bus", "🚇 Metrô": "subway", "🚆 Trem": "train", "🚊 VLT": "tram"}
+    outros_opcoes  = {"🚶 A pé": "walking", "🚗 Carro": "driving"}
+
+    col_tr, col_out = st.columns([3, 1])
+
+    with col_tr:
+        st.markdown("<span style=\'font-size:12px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.5px\'>Transporte público</span>", unsafe_allow_html=True)
+        cols_t = st.columns(len(transit_opcoes))
+        transit_selecionados = []
+        for col, (label, val) in zip(cols_t, transit_opcoes.items()):
+            if col.checkbox(label, value=True, key=f"modo_{val}"):
+                transit_selecionados.append(val)
+
+    with col_out:
+        st.markdown("<span style=\'font-size:12px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.5px\'>Outros</span>", unsafe_allow_html=True)
+        cols_o = st.columns(len(outros_opcoes))
+        outros_selecionados = []
+        for col, (label, val) in zip(cols_o, outros_opcoes.items()):
+            if col.checkbox(label, value=False, key=f"modo_{val}"):
+                outros_selecionados.append(val)
+
+    # Decide modo e transit_mode para a API
+    tem_transit = len(transit_selecionados) > 0
+    so_walking   = outros_selecionados == ["walking"] and not tem_transit
+    so_driving   = outros_selecionados == ["driving"] and not tem_transit
+
+    if so_walking:
+        modo_api, transit_mode = "walking", None
+    elif so_driving:
+        modo_api, transit_mode = "driving", None
+    elif tem_transit:
         modo_api = "transit"
-        transit_mode = modo_api_val.lower()   # bus | subway | train | tram
-    elif modo_api_val == "WALKING":
-        modo_api = "walking"
-        transit_mode = None
+        transit_mode = "|".join(transit_selecionados)  # ex: "bus|subway|train"
     else:
-        modo_api = "driving"
-        transit_mode = None
+        modo_api, transit_mode = "transit", None
 
     st.markdown("---")
 
