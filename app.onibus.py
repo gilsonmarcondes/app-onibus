@@ -292,114 +292,347 @@ aba_rota, aba_monitor, aba_ponto, aba_london = st.tabs([
 ])
 
 # ==========================================
-# ABA 1: PLANEJADOR DE ROTA
+# ABA 1: PLANEJADOR — ESTILO GOOGLE MAPS
 # ==========================================
 with aba_rota:
-    st.subheader("Para onde vamos?")
+
+    # CSS extra específico para o planejador
+    st.markdown("""
+    <style>
+    /* Painel de origem/destino */
+    .painel-rota {
+        background: white;
+        border-radius: 14px;
+        padding: 20px 24px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom: 16px;
+    }
+    /* Botões de modo de transporte (chips) */
+    .transport-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px 0; }
+    .transport-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 7px 16px; border-radius: 20px; font-size: 13px; font-weight: 500;
+        border: 2px solid #e2e8f0; background: white; color: #475569; cursor: pointer;
+        transition: all 0.15s;
+    }
+    .transport-chip.ativo {
+        border-color: #004a99; background: #eff6ff; color: #004a99; font-weight: 600;
+    }
+    /* Linha de entrada (origem/destino) */
+    .linha-input { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .dot-verde { width:12px; height:12px; background:#22c55e; border-radius:50%; flex-shrink:0; }
+    .dot-vermelho { width:12px; height:12px; background:#ef4444; border-radius:50%; flex-shrink:0; }
+    .linha-tracejada { width:2px; height:20px; background:repeating-linear-gradient(to bottom,#cbd5e1 0,#cbd5e1 4px,transparent 4px,transparent 8px); margin-left:5px; }
+
+    /* Card de resultado de rota */
+    .rota-card {
+        background: white; border-radius: 12px; padding: 16px 20px;
+        border-left: 5px solid #004a99; margin-bottom: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        cursor: pointer; transition: box-shadow 0.2s, transform 0.15s;
+    }
+    .rota-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,0.1); transform: translateY(-2px); }
+    .rota-card-melhor { border-left-color: #16a34a; }
+    .rota-badge {
+        display:inline-block; font-size:10px; font-weight:700; padding:2px 8px;
+        border-radius:10px; background:#dcfce7; color:#15803d; margin-left:8px;
+        vertical-align: middle;
+    }
+
+    /* Etapas de transporte */
+    .step-transit { display:flex; align-items:flex-start; gap:12px; padding:12px 0; border-bottom:1px solid #f1f5f9; }
+    .step-icon { font-size:22px; min-width:32px; text-align:center; }
+    .step-info { flex:1; }
+    .step-linha-tag {
+        display:inline-block; padding:2px 10px; border-radius:4px;
+        font-size:12px; font-weight:700; color:white; margin-bottom:4px;
+    }
+    .step-detalhe { font-size:13px; color:#64748b; margin-top:2px; }
+
+    /* Quando: chips de horário */
+    .quando-row { display:flex; gap:8px; flex-wrap: wrap; margin: 8px 0; }
+    .quando-chip {
+        padding:6px 16px; border-radius:16px; font-size:13px; font-weight:500;
+        border:2px solid #e2e8f0; background:white; color:#475569; cursor:pointer;
+    }
+    .quando-chip.ativo { border-color:#004a99; background:#eff6ff; color:#004a99; }
+
+    /* Filtros de modal de transporte */
+    .filtro-section { margin-top:12px; }
+    .filtro-label { font-size:12px; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; }
+    </style>
+    """, unsafe_allow_html=True)
 
     if not CHAVE_GOOGLE:
         st.markdown(
             '<div class="alerta-inline">⚠️ <strong>Chave Google Maps não configurada.</strong> '
-            'Adicione <code>CHAVE_GOOGLE</code> em <code>.streamlit/secrets.toml</code> para usar esta aba.</div>',
+            'Adicione <code>CHAVE_GOOGLE</code> em <code>.streamlit/secrets.toml</code>.</div>',
             unsafe_allow_html=True
         )
 
-    c_orig, c_dest = st.columns(2)
-    with c_orig:
-        tipo_origem = st.radio(
-            "Origem:", ["📍 Usar meu GPS", "⌨️ Digitar Endereço"],
-            horizontal=True, key="orig_type"
-        )
-        if tipo_origem == "📍 Usar meu GPS":
+    # ── PAINEL ORIGEM / DESTINO ──────────────────────────────────
+    st.markdown('<div class="painel-rota">', unsafe_allow_html=True)
+
+    col_inputs, col_troca = st.columns([10, 1])
+    with col_inputs:
+        # Origem
+        st.markdown('<div class="linha-input"><span class="dot-verde"></span></div>', unsafe_allow_html=True)
+        tipo_origem = st.radio("", ["📍 Minha localização", "⌨️ Digitar"], horizontal=True, key="orig_type", label_visibility="collapsed")
+        if tipo_origem == "📍 Minha localização":
             origem_final = f"{lat_u},{lon_u}" if lat_u else None
-            st.text_input("Saindo de:", value="Minha localização atual", disabled=True)
+            st.text_input("Saindo de", value="Minha localização atual", disabled=True, label_visibility="collapsed")
         else:
-            origem_final = st.text_input(
-                "Saindo de:", placeholder="Ex: Av. Paulista, 1000", key="orig_text"
-            )
+            origem_final = st.text_input("Saindo de", placeholder="Ponto de partida", key="orig_text", label_visibility="collapsed")
 
-    with c_dest:
-        destino_final = st.text_input(
-            "Indo para:", placeholder="Ex: Estação da Luz", key="dest_text"
+        st.markdown('<div class="linha-tracejada" style="margin:4px 0 4px 5px"></div>', unsafe_allow_html=True)
+
+        # Destino
+        st.markdown('<div class="linha-input"><span class="dot-vermelho"></span></div>', unsafe_allow_html=True)
+        destino_final = st.text_input("Indo para", placeholder="Destino", key="dest_text", label_visibility="collapsed")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── MODO DE TRANSPORTE (chips visuais via radio) ──────────────
+    st.markdown("**Modo de transporte**")
+    modos_opcoes = {
+        "🚌 Ônibus": "BUS",
+        "🚇 Metrô": "SUBWAY",
+        "🚆 Trem": "TRAIN",
+        "🚊 VLT/Tram": "TRAM",
+        "🚶 A pé": "WALKING",
+        "🚗 Carro": "DRIVING",
+    }
+    modo_sel = st.radio(
+        "modo", list(modos_opcoes.keys()),
+        horizontal=True, key="modo_transporte", label_visibility="collapsed"
+    )
+    modo_api_val = modos_opcoes[modo_sel]
+
+    # Mapeia para o que a API aceita
+    if modo_api_val in ("BUS", "SUBWAY", "TRAIN", "TRAM"):
+        modo_api = "transit"
+        transit_mode = modo_api_val.lower()   # bus | subway | train | tram
+    elif modo_api_val == "WALKING":
+        modo_api = "walking"
+        transit_mode = None
+    else:
+        modo_api = "driving"
+        transit_mode = None
+
+    st.markdown("---")
+
+    # ── PREFERÊNCIAS (só mostra se for transit) ───────────────────
+    col_pref, col_quando = st.columns([1, 1])
+
+    with col_pref:
+        if modo_api == "transit":
+            st.markdown("**Preferência de rota**")
+            prioridade_map = {
+                "⚡ Mais rápida":       "best_guess",
+                "🔄 Menos baldeações":  "fewer_transfers",
+                "🚶 Menos caminhada":   "less_walking",
+            }
+            pref_sel = st.radio(
+                "pref", list(prioridade_map.keys()),
+                horizontal=False, key="pref_rota", label_visibility="collapsed"
+            )
+            prioridade = prioridade_map[pref_sel]
+        else:
+            prioridade = "best_guess"
+
+    with col_quando:
+        st.markdown("**Quando**")
+        quando_opcoes = ["🟢 Sair agora", "🕐 Horário de saída", "🏁 Horário de chegada"]
+        quando_sel = st.radio(
+            "quando", quando_opcoes,
+            horizontal=False, key="quando_rota", label_visibility="collapsed"
         )
 
-    with st.expander("⚙️ Preferências de Trajeto"):
-        col_m, col_p, col_h = st.columns(3)
-        with col_m:
-            modo = st.selectbox(
-                "Transporte:", ["transit", "walking", "driving"],
-                format_func=lambda x: {"transit": "🚌 Ônibus/Metrô", "walking": "🚶 A pé", "driving": "🚗 Carro"}[x]
-            )
-        with col_p:
-            prioridade = st.selectbox(
-                "Prioridade:", ["best_guess", "fewer_transfers", "less_walking"],
-                format_func=lambda x: {"best_guess": "⚡ Mais Rápido", "fewer_transfers": "🔄 Menos Trocas", "less_walking": "🚶 Menos Caminhada"}[x]
-            )
-        with col_h:
-            quando = st.radio("Quando:", ["Sair Agora", "Escolher Horário"], horizontal=True)
-            ts = "now"
-            if quando == "Escolher Horário":
-                h_e = st.time_input("Horário de Saída:", value=datetime.now().time())
-                dt = datetime.combine(datetime.today(), h_e)
-                ts = int(time_lib.mktime(dt.timetuple()))
+        ts = "now"
+        arrival_time = None
 
-    if st.button("🚀 Calcular Melhor Rota", type="primary"):
+        if quando_sel == "🕐 Horário de saída":
+            col_d, col_h = st.columns(2)
+            with col_d:
+                data_sel = st.date_input("Data", value=datetime.today(), key="data_saida", label_visibility="collapsed")
+            with col_h:
+                hora_sel = st.time_input("Hora", value=datetime.now().time(), key="hora_saida", label_visibility="collapsed")
+            dt = datetime.combine(data_sel, hora_sel)
+            ts = int(time_lib.mktime(dt.timetuple()))
+
+        elif quando_sel == "🏁 Horário de chegada":
+            col_d, col_h = st.columns(2)
+            with col_d:
+                data_arr = st.date_input("Data", value=datetime.today(), key="data_chegada", label_visibility="collapsed")
+            with col_h:
+                hora_arr = st.time_input("Hora", value=datetime.now().time(), key="hora_chegada", label_visibility="collapsed")
+            dt_arr = datetime.combine(data_arr, hora_arr)
+            arrival_time = int(time_lib.mktime(dt_arr.timetuple()))
+            ts = "now"  # departure_time ignorado quando arrival_time está presente
+
+    # ── BOTÃO ─────────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🔍 Buscar rotas", type="primary", key="btn_buscar_rota"):
         if not CHAVE_GOOGLE:
             st.error("Configure a chave da API Google Maps para usar esta função.")
         elif not origem_final or "None" in str(origem_final):
             st.error("Origem não definida. Ative o GPS ou digite o endereço de partida.")
         elif not destino_final:
-            st.warning("Por favor, digite o destino.")
+            st.warning("Digite o destino.")
         else:
-            with st.spinner("Consultando rotas..."):
+            with st.spinner("Buscando rotas..."):
                 try:
-                    url = (
-                        f"https://maps.googleapis.com/maps/api/directions/json"
-                        f"?origin={origem_final}&destination={destino_final}"
-                        f"&mode={modo}&transit_routing_preference={prioridade}"
-                        f"&departure_time={ts}&language=pt-BR&key={CHAVE_GOOGLE}"
-                    )
-                    res = requests.get(url, timeout=10).json()
+                    # Monta URL com parâmetros corretos
+                    params = {
+                        "origin": origem_final,
+                        "destination": destino_final,
+                        "mode": modo_api,
+                        "language": "pt-BR",
+                        "key": CHAVE_GOOGLE,
+                        "alternatives": "true",   # pede múltiplas rotas
+                    }
+                    if modo_api == "transit":
+                        params["transit_routing_preference"] = prioridade
+                        if transit_mode:
+                            params["transit_mode"] = transit_mode
+                    if arrival_time:
+                        params["arrival_time"] = arrival_time
+                    elif ts != "now":
+                        params["departure_time"] = ts
+                    else:
+                        params["departure_time"] = "now"
+
+                    res = requests.get(
+                        "https://maps.googleapis.com/maps/api/directions/json",
+                        params=params, timeout=12
+                    ).json()
 
                     if res.get('status') == 'OK':
-                        r = res['routes'][0]
-                        lg = r['legs'][0]
+                        rotas = res['routes']
 
-                        # Métricas da rota
-                        mc1, mc2, mc3 = st.columns(3)
+                        # ── CARDS DE OPÇÕES DE ROTA ──────────────────────
+                        st.markdown(f"### {len(rotas)} rota(s) encontrada(s)")
+
+                        opcoes_label = []
+                        for i, r in enumerate(rotas):
+                            lg = r['legs'][0]
+                            dur = lg['duration']['text']
+                            dist = lg['distance']['text']
+                            label = f"Rota {i+1} · {dur} · {dist}"
+                            opcoes_label.append(label)
+
+                        rota_escolhida_idx = st.radio(
+                            "Selecione a rota:", opcoes_label,
+                            key="rota_sel", label_visibility="collapsed"
+                        )
+                        idx = opcoes_label.index(rota_escolhida_idx)
+                        r_sel = rotas[idx]
+                        lg = r_sel['legs'][0]
+
+                        # ── RESUMO DA ROTA SELECIONADA ────────────────────
+                        mc1, mc2, mc3, mc4 = st.columns(4)
                         mc1.metric("⏱️ Duração", lg['duration']['text'])
                         mc2.metric("📏 Distância", lg['distance']['text'])
-                        mc3.metric("🚏 Partida", lg.get('departure_time', {}).get('text', 'Agora'))
+                        dep = lg.get('departure_time', {}).get('text', '—')
+                        arr = lg.get('arrival_time', {}).get('text', '—')
+                        mc3.metric("🚀 Saída", dep)
+                        mc4.metric("🏁 Chegada", arr)
 
                         col_txt, col_map = st.columns([1, 1])
+
                         with col_txt:
-                            st.markdown("#### 📋 Instruções de Viagem")
+                            st.markdown("#### 📋 Passo a passo")
                             for i, step in enumerate(lg['steps'], 1):
-                                txt = (step['html_instructions']
-                                       .replace('<b>', '**').replace('</b>', '**')
-                                       .replace('<div style="font-size:0.9em">', ' (')
-                                       .replace('</div>', ')'))
-                                st.markdown(
-                                    f'<div class="instrucao-passo"><strong>{i}.</strong> {txt}</div>',
-                                    unsafe_allow_html=True
-                                )
+                                modo_step = step.get('travel_mode', '')
+                                transit = step.get('transit_details', {})
+
+                                if modo_step == 'TRANSIT' and transit:
+                                    line = transit.get('line', {})
+                                    nome_linha = line.get('short_name') or line.get('name', '?')
+                                    vehicle = line.get('vehicle', {})
+                                    tipo_veiculo = vehicle.get('name', 'Ônibus')
+                                    icone_v = vehicle.get('local_icon') or ''
+                                    cor_linha = line.get('color', '#004a99')
+                                    dep_stop = transit.get('departure_stop', {}).get('name', '?')
+                                    arr_stop = transit.get('arrival_stop', {}).get('name', '?')
+                                    n_paradas = transit.get('num_stops', '?')
+                                    h_saida = transit.get('departure_time', {}).get('text', '')
+                                    h_cheg = transit.get('arrival_time', {}).get('text', '')
+
+                                    emoji_v = {"Bus": "🚌", "Subway": "🚇", "Heavy Rail": "🚆",
+                                               "Commuter Train": "🚆", "Tram": "🚊"}.get(tipo_veiculo, "🚌")
+
+                                    st.markdown(f"""
+                                    <div class="instrucao-passo">
+                                        <div style="margin-bottom:6px">
+                                            {emoji_v}
+                                            <span class="step-linha-tag" style="background:{cor_linha}">{nome_linha}</span>
+                                            <strong>{tipo_veiculo}</strong>
+                                        </div>
+                                        <div style="font-size:13px;color:#374151">
+                                            📍 <strong>{dep_stop}</strong> → <strong>{arr_stop}</strong>
+                                        </div>
+                                        <div class="step-detalhe">
+                                            {n_paradas} parada(s) &nbsp;·&nbsp; {h_saida} → {h_cheg}
+                                        </div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+
+                                else:
+                                    # Passo a pé ou carro
+                                    txt = (step['html_instructions']
+                                           .replace('<b>', '<strong>').replace('</b>', '</strong>')
+                                           .replace('<div style="font-size:0.9em">', '<br><span style="color:#64748b;font-size:12px">')
+                                           .replace('</div>', '</span>'))
+                                    dur_step = step.get('duration', {}).get('text', '')
+                                    dist_step = step.get('distance', {}).get('text', '')
+                                    emoji_step = "🚶" if modo_step == "WALKING" else "🚗"
+                                    st.markdown(f"""
+                                    <div class="instrucao-passo" style="border-left-color:#94a3b8">
+                                        {emoji_step} {txt}
+                                        <div class="step-detalhe">{dur_step} · {dist_step}</div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
 
                         with col_map:
-                            pts = decode_poly(r['overview_polyline']['points'])
-                            m_r = folium.Map(location=pts[0], zoom_start=14, tiles='CartoDB Positron')
+                            pts = decode_poly(r_sel['overview_polyline']['points'])
+                            m_r = folium.Map(location=pts[0], zoom_start=13, tiles='CartoDB Positron')
                             folium.PolyLine(pts, color="#004a99", weight=6, opacity=0.85).add_to(m_r)
-                            folium.Marker(pts[0], tooltip="Início", icon=folium.Icon(color='green', icon='play')).add_to(m_r)
-                            folium.Marker(pts[-1], tooltip="Destino", icon=folium.Icon(color='red', icon='flag')).add_to(m_r)
-                            st_folium(m_r, width=600, height=500, key="mapa_planeador")
+                            folium.Marker(pts[0], tooltip="Partida", icon=folium.Icon(color='green', icon='play')).add_to(m_r)
+                            folium.Marker(pts[-1], tooltip="Chegada", icon=folium.Icon(color='red', icon='flag')).add_to(m_r)
+
+                            # Marca pontos de embarque/desembarque
+                            for step in lg['steps']:
+                                if step.get('travel_mode') == 'TRANSIT':
+                                    td = step.get('transit_details', {})
+                                    dep_loc = td.get('departure_stop', {}).get('location', {})
+                                    arr_loc = td.get('arrival_stop', {}).get('location', {})
+                                    if dep_loc:
+                                        folium.CircleMarker(
+                                            [dep_loc['lat'], dep_loc['lng']],
+                                            radius=6, color='#004a99', fill=True,
+                                            tooltip=td.get('departure_stop', {}).get('name', '')
+                                        ).add_to(m_r)
+                                    if arr_loc:
+                                        folium.CircleMarker(
+                                            [arr_loc['lat'], arr_loc['lng']],
+                                            radius=6, color='#ef4444', fill=True,
+                                            tooltip=td.get('arrival_stop', {}).get('name', '')
+                                        ).add_to(m_r)
+
+                            st_folium(m_r, width=620, height=520, key="mapa_planeador")
+
                     else:
                         status = res.get('status', 'UNKNOWN')
                         msgs = {
-                            'ZERO_RESULTS': 'Nenhuma rota encontrada entre os pontos informados.',
-                            'NOT_FOUND': 'Um dos endereços não foi encontrado. Tente ser mais específico.',
+                            'ZERO_RESULTS': 'Nenhuma rota encontrada. Tente outros endereços ou modo de transporte.',
+                            'NOT_FOUND': 'Endereço não encontrado. Seja mais específico.',
                             'REQUEST_DENIED': 'Chave da API inválida ou sem permissão.',
                             'OVER_DAILY_LIMIT': 'Limite diário da API Google atingido.',
+                            'INVALID_REQUEST': 'Parâmetros inválidos. Verifique origem e destino.',
                         }
                         st.error(f"Erro: {msgs.get(status, status)}")
+
                 except requests.RequestException as e:
                     st.error(f"Falha de conexão com a API Google: {e}")
 
