@@ -201,11 +201,28 @@ with aba_rota:
         st.divider()
         if st.button("🚀 TRAÇAR ROTA AGORA", type="primary"):
             with st.spinner("Consultando Google Maps..."):
-                o, d = st.session_state['origem_sel']['coord'], st.session_state['destino_sel']['coord']
-                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={o}&destination={d}&mode=transit&language=pt-BR&key={CHAVE_GOOGLE}"
-                resp = requests.get(url).json()
-                if resp.get('status') == 'OK': st.session_state['rota_ativa'] = resp['routes'][0]
-                else: st.error(f"Erro do Google: {resp.get('status')}")
+                o = st.session_state['origem_sel']['coord']
+                d = st.session_state['destino_sel']['coord']
+                
+                # Deixando o Python formatar a URL com segurança (Evita o erro de Parâmetros Inválidos)
+                url = "https://maps.googleapis.com/maps/api/directions/json"
+                parametros = {
+                    "origin": str(o).strip(),
+                    "destination": str(d).strip(),
+                    "mode": "transit",
+                    "language": "pt-BR",
+                    "key": CHAVE_GOOGLE
+                }
+                
+                try:
+                    resp = requests.get(url, params=parametros).json()
+                    if resp.get('status') == 'OK': 
+                        st.session_state['rota_ativa'] = resp['routes'][0]
+                        st.rerun() # Força a tela a atualizar imediatamente com o mapa
+                    else: 
+                        st.error(f"O Google recusou a rota. Status: {resp.get('status')}")
+                except Exception as e:
+                    st.error("Erro de conexão com o Google. Tente novamente.")
 
     # --- EXIBIÇÃO INDEPENDENTE DO MAPA ---
     if st.session_state.get('rota_ativa'):
