@@ -118,13 +118,15 @@ dados_paradas, dados_horarios, dados_trajetos = carregar_dados_locais()
 if 'rota_ativa' not in st.session_state: st.session_state['rota_ativa'] = None
 if 'origem_sel' not in st.session_state: st.session_state['origem_sel'] = None
 if 'destino_sel' not in st.session_state: st.session_state['destino_sel'] = None
+if 'busca_o_res' not in st.session_state: st.session_state['busca_o_res'] = None
+if 'busca_d_res' not in st.session_state: st.session_state['busca_d_res'] = None
 
 # ==========================================
 # 4. SIDEBAR E GPS
 # ==========================================
 with st.sidebar:
     st.markdown('<p style="font-size:24px; font-weight:800; color:white;">🚌 BusRadar Pro</p>', unsafe_allow_html=True)
-    st.caption("v6.3 · UNESP Specialized Edition")
+    st.caption("v6.4 · Autocomplete Edition")
     st.divider()
     gps = streamlit_geolocation()
     lat_u, lon_u = (gps['latitude'], gps['longitude']) if gps and gps.get('latitude') else (None, None)
@@ -145,51 +147,87 @@ with aba_rota:
     
     col_a, col_b = st.columns(2)
     
+    # --- BLOCO DA ORIGEM ---
     with col_a:
         st.markdown("**1. Ponto de Partida**")
         t_o = st.radio("Origem:", ["📍 Meu GPS", "🔍 Buscar Endereço"], horizontal=True, key="opt_o")
-        if t_o == "📍 Meu GPS" and lat_u:
-            st.session_state['origem_sel'] = {"nome": "Sua localização atual", "coord": f"{lat_u},{lon_u}"}
         
-        q_o = st.text_input("Local de saída:", placeholder="Ex: Estação Ana Rosa", key="in_o")
-        if st.button("Buscar Origem", key="btn_o"):
-            res_o = buscar_lugares_google(q_o)
-            if res_o:
-                sel_o = st.selectbox("Selecione:", list(res_o.keys()), key="res_o")
-                st.session_state['origem_sel'] = {"nome": sel_o, "coord": f"{res_o[sel_o]['lat']},{res_o[sel_o]['lng']}"}
+        if t_o == "📍 Meu GPS":
+            if lat_u:
+                st.session_state['origem_sel'] = {"nome": "Sua localização atual", "coord": f"{lat_u},{lon_u}"}
+                st.success("📍 GPS selecionado!")
+            else:
+                st.warning("GPS não detectado.")
+                
+        elif t_o == "🔍 Buscar Endereço":
+            q_o = st.text_input("Local de saída:", placeholder="Ex: Metrô Ana Rosa", key="in_o")
+            if st.button("🔍 Buscar Origem", key="btn_o"):
+                res = buscar_lugares_google(q_o)
+                if res: st.session_state['busca_o_res'] = res
+                else: st.error("Nenhum local encontrado ou verifique o Faturamento da API.")
+
+            if st.session_state['busca_o_res']:
+                opcoes = st.session_state['busca_o_res']
+                sel_o = st.selectbox("Escolha o local correto:", list(opcoes.keys()), key="res_o")
+                
+                if st.button("✅ Confirmar Origem", key="conf_o"):
+                    st.session_state['origem_sel'] = {"nome": sel_o, "coord": f"{opcoes[sel_o]['lat']},{opcoes[sel_o]['lng']}"}
+                    st.session_state['busca_o_res'] = None 
+                    st.rerun()
+
+        if st.session_state['origem_sel'] and t_o == "🔍 Buscar Endereço":
+            st.info(f"Origem: {st.session_state['origem_sel']['nome']}")
     
+    # --- BLOCO DO DESTINO ---
     with col_b:
         st.markdown("**2. Destino**")
         q_d = st.text_input("Para onde vai:", placeholder="Ex: Aeroporto Congonhas", key="in_d")
-        if st.button("Buscar Destino", key="btn_d"):
-            res_d = buscar_lugares_google(q_d)
-            if res_d:
-                sel_d = st.selectbox("Selecione:", list(res_d.keys()), key="res_d")
-                st.session_state['destino_sel'] = {"nome": sel_d, "coord": f"{res_d[sel_d]['lat']},{res_d[sel_d]['lng']}"}
+        if st.button("🔍 Buscar Destino", key="btn_d"):
+            res = buscar_lugares_google(q_d)
+            if res: st.session_state['busca_d_res'] = res
+            else: st.error("Nenhum local encontrado ou erro na API.")
 
+        if st.session_state['busca_d_res']:
+            opcoes_d = st.session_state['busca_d_res']
+            sel_d = st.selectbox("Escolha o local correto:", list(opcoes_d.keys()), key="res_d")
+            
+            if st.button("✅ Confirmar Destino", key="conf_d"):
+                st.session_state['destino_sel'] = {"nome": sel_d, "coord": f"{opcoes_d[sel_d]['lat']},{opcoes_d[sel_d]['lng']}"}
+                st.session_state['busca_d_res'] = None
+                st.rerun()
+
+        if st.session_state['destino_sel']:
+            st.info(f"Destino: {st.session_state['destino_sel']['nome']}")
+
+    # --- BOTÃO DE TRAÇAR ROTA ---
     if st.session_state['origem_sel'] and st.session_state['destino_sel']:
-        st.info(f"🚗 {st.session_state['origem_sel']['nome']} ➔ {st.session_state['destino_sel']['nome']}")
+        st.divider()
         if st.button("🚀 TRAÇAR ROTA AGORA", type="primary"):
-            o, d = st.session_state['origem_sel']['coord'], st.session_state['destino_sel']['coord']
-            url = f"https://maps.googleapis.com/maps/api/directions/json?origin={o}&destination={d}&mode=transit&language=pt-BR&key={CHAVE_GOOGLE}"
-            resp = requests.get(url).json()
-            if resp['status'] == 'OK': st.session_state['rota_ativa'] = resp['routes'][0]
-            else: st.error("Não foi possível traçar a rota.")
+            with st.spinner("Consultando Google Maps..."):
+                o, d = st.session_state['origem_sel']['coord'], st.session_state['destino_sel']['coord']
+                url = f"https://maps.googleapis.com/maps/api/directions/json?origin={o}&destination={d}&mode=transit&language=pt-BR&key={CHAVE_GOOGLE}"
+                resp = requests.get(url).json()
+                if resp['status'] == 'OK': 
+                    st.session_state['rota_ativa'] = resp['routes'][0]
+                else: 
+                    st.error(f"Erro do Google: {resp['status']}. Verifique a API.")
 
-    # EXIBIÇÃO INDEPENDENTE (Resolve o erro do sumiço)
-    if st.session_state['rota_ativa']:
+    # --- EXIBIÇÃO INDEPENDENTE DO MAPA ---
+    if st.session_state.get('rota_ativa'):
         st.divider()
         r = st.session_state['rota_ativa']
         leg = r['legs'][0]
-        st.success(f"⏱️ Tempo: {leg['duration']['text']} | 🏁 Chegada: {leg.get('arrival_time', {}).get('text', 'N/D')}")
+        st.success(f"⏱️ Tempo: **{leg['duration']['text']}** | 🏁 Chegada: **{leg.get('arrival_time', {}).get('text', 'N/D')}**")
         
         c1, c2 = st.columns([4, 6])
         with c1:
             for s in leg['steps']:
                 txt = s['html_instructions'].replace('<b>', '**').replace('</b>', '**')
                 st.markdown(f'<div class="instrucao-passo">{txt}</div>', unsafe_allow_html=True)
-            if st.button("🗑️ Limpar Mapa"):
+            if st.button("🗑️ Nova Busca"):
                 st.session_state['rota_ativa'] = None
+                st.session_state['origem_sel'] = None
+                st.session_state['destino_sel'] = None
                 st.rerun()
         with c2:
             pts = decode_poly(r['overview_polyline']['points'])
@@ -197,7 +235,7 @@ with aba_rota:
             folium.PolyLine(pts, color="#004a99", weight=6, opacity=0.8).add_to(m)
             folium.Marker(pts[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
             folium.Marker(pts[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
-            st_folium(m, width=700, height=500, key="mapa_planejador_v63")
+            st_folium(m, width=700, height=500, key="mapa_planejador_v64")
 
 # ==========================================
 # ABA 2: MONITOR DE FROTA + QUADRO DE HORÁRIOS
@@ -233,13 +271,14 @@ with aba_monitor:
             if vs:
                 st.metric("🚌 Frota Monitorada", len(vs), delta=f"{sum(1 for v in vs if v.get('a'))} acessíveis")
                 m_f = folium.Map(location=[vs[0]['py'], vs[0]['px']], zoom_start=13, tiles='CartoDB Positron')
-                # Desenha trajeto oficial
+                
                 ch_traj = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl']}"
                 if ch_traj in dados_trajetos:
                     folium.PolyLine(dados_trajetos[ch_traj], color="#00A1FF", weight=4, opacity=0.5).add_to(m_f)
+                
                 for v in vs:
                     folium.Marker([v['py'], v['px']], icon=folium.Icon(color='blue' if v.get('a') else 'red', icon='bus', prefix='fa')).add_to(m_f)
-                st_folium(m_f, width=1000, height=450, key="mapa_frota_v63")
+                st_folium(m_f, width=1000, height=450, key="mapa_frota_v64")
         else: st.error("Linha não encontrada.")
 
 # ==========================================
