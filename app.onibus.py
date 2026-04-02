@@ -90,17 +90,48 @@ def buscar_lugares_google(query):
     if not query or len(query) < 3: return {}
     url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={query}&key={CHAVE_GOOGLE}&language=pt-BR"
     try:
-        res = requests.get(url).json()
-        if res['status'] == 'OK':
+        res = requests.get(url, timeout=10).json()
+        if res.get('status') == 'OK':
             return {item['formatted_address']: item['geometry']['location'] for item in res['results']}
-    except: pass
+        elif res.get('status') == 'REQUEST_DENIED':
+            st.error("❌ Chave da API Google inválida ou sem permissão.")
+        elif res.get('status') == 'ZERO_RESULTS':
+            return {}
+        else:
+            st.warning(f"Google Places retornou status: {res.get('status', 'desconhecido')}")
+    except requests.exceptions.Timeout:
+        st.error("⏱️ Tempo de resposta esgotado ao consultar o Google. Tente novamente.")
+    except requests.exceptions.ConnectionError:
+        st.error("🌐 Sem conexão com o Google. Verifique sua internet.")
+    except Exception as e:
+        st.error(f"Erro inesperado na busca de endereço: {e}")
     return {}
+
+# Callbacks para executar a busca ao pressionar Enter nos campos de endereço
+def proc_origem():
+    q = st.session_state.get("in_o", "")
+    if len(q) >= 3:
+        st.session_state['busca_o_res'] = buscar_lugares_google(q)
+        st.session_state['origem_sel'] = None
+
+def proc_destino():
+    q = st.session_state.get("in_d", "")
+    if len(q) >= 3:
+        st.session_state['busca_d_res'] = buscar_lugares_google(q)
+        st.session_state['destino_sel'] = None
 
 @st.cache_resource(show_spinner=False)
 def criar_sessao_sptrans():
     s = requests.Session()
     if TOKEN_SPTRANS:
-        s.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}")
+        try:
+            s.post(f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={TOKEN_SPTRANS}", timeout=10)
+        except requests.exceptions.Timeout:
+            st.warning("⏱️ Timeout ao autenticar na SPTrans. Dados em tempo real podem estar indisponíveis.")
+        except requests.exceptions.ConnectionError:
+            st.warning("🌐 Não foi possível conectar à API SPTrans. Verifique sua conexão.")
+        except Exception as e:
+            st.warning(f"Erro ao autenticar na SPTrans: {e}")
     return s
 
 dados_paradas, dados_horarios, dados_trajetos = carregar_dados_locais()
@@ -138,19 +169,6 @@ aba_rota, aba_monitor, aba_ponto, aba_london = st.tabs([
 with aba_rota:
     st.subheader("Para onde vamos hoje?")
     
-    # Callbacks para executar a busca automaticamente ao dar Enter
-    def proc_origem():
-        q = st.session_state.get("in_o", "")
-        if len(q) >= 3:
-            st.session_state['busca_o_res'] = buscar_lugares_google(q)
-            st.session_state['origem_sel'] = None 
-
-    def proc_destino():
-        q = st.session_state.get("in_d", "")
-        if len(q) >= 3:
-            st.session_state['busca_d_res'] = buscar_lugares_google(q)
-            st.session_state['destino_sel'] = None
-            
     col_a, col_b = st.columns(2)
     
     with col_a:
@@ -181,7 +199,16 @@ with aba_rota:
     
     with col_b:
         st.markdown("**2. Destino**")
-        st.text_input("Para onde vai (Digite e aperte ENTER):", placeholder="Ex: Aeroporto Congonhas", key="in_d", on_change=proc_destino)
+        t_d = st.radio("Destino:", ["🔍 Digitar Endereço", "📍 Meu GPS"], horizontal=True, key="radio_destino")
+
+        if t_d == "📍 Meu GPS":
+            if lat_u:
+                st.session_state['destino_sel'] = {"nome": "Sua localização atual (destino)", "coord": f"{lat_u},{lon_u}"}
+                st.success("📍 GPS selecionado como destino!")
+            else:
+                st.warning("GPS não detectado.")
+        else:
+            st.text_input("Para onde vai (Digite e aperte ENTER):", placeholder="Ex: Aeroporto Congonhas", key="in_d", on_change=proc_destino)
 
         if st.session_state.get('busca_d_res'):
             opcoes_d = st.session_state['busca_d_res']
@@ -278,13 +305,22 @@ with aba_monitor:
     
     if lin_id and TOKEN_SPTRANS:
         sessao = criar_sessao_sptrans()
-        res_l = sessao.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={lin_id}").json()
+        try:
+            res_l = sessao.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Linha/Buscar?termosBusca={lin_id}", timeout=10).json()
+        except Exception as e:
+            st.error(f"Erro ao buscar linha na SPTrans: {e}")
+            res_l = []
         
         if res_l:
             opcoes = {f"{l['lt']}-{l['tl']} | {l['tp']} ➔ {l['ts']}": l for l in res_l}
             l_sel = opcoes[st.selectbox("Escolha o sentido:", list(opcoes.keys()))]
             
-            chave_h = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl'] - 1}"
+            # Nota: sl=1 → índice 0 nos horários locais (base 0), sl=2 → índice 1
+            # A API retorna sl como 1 ou 2; o arquivo horarios.json usa sl-1 como chave
+            sl_idx = l_sel['sl'] - 1
+            chave_h = f"{l_sel['lt']}-{l_sel['tl']}-{sl_idx}"
+            # O arquivo trajetos.json usa sl diretamente (base 1) como chave
+            ch_traj = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl']}"
             if chave_h in dados_horarios:
                 with st.expander("📅 Horários Programados (Saídas)"):
                     prog = dados_horarios[chave_h]
@@ -296,12 +332,15 @@ with aba_monitor:
                             if h_l: st.markdown("".join([f'<span class="horario-pills">{h}</span>' for h in h_l]), unsafe_allow_html=True)
                             else: st.caption("Sem dados")
 
-            pos = sessao.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}").json()
+            try:
+                pos = sessao.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Posicao/Linha?codigoLinha={l_sel['cl']}", timeout=10).json()
+            except Exception as e:
+                st.error(f"Erro ao buscar posição dos veículos: {e}")
+                pos = {}
             vs = pos.get('vs', [])
             if vs:
                 st.metric("🚌 Frota Monitorada", len(vs), delta=f"{sum(1 for v in vs if v.get('a'))} acessíveis")
                 m_f = folium.Map(location=[vs[0]['py'], vs[0]['px']], zoom_start=13, tiles='CartoDB Positron')
-                ch_traj = f"{l_sel['lt']}-{l_sel['tl']}-{l_sel['sl']}"
                 if ch_traj in dados_trajetos:
                     folium.PolyLine(dados_trajetos[ch_traj], color="#00A1FF", weight=4, opacity=0.5).add_to(m_f)
                 for v in vs:
@@ -321,17 +360,32 @@ with aba_ponto:
         sessao = criar_sessao_sptrans()
         pontos = []
         for p in dados_paradas:
-            dist = calcular_distancia_haversine(lat_u, lon_u, float(p.get('py', 0)), float(p.get('px', 0)))
-            if dist <= 400: pontos.append({'cp': p['cp'], 'np': p['np'], 'dist': int(dist)})
+            # Ignora paradas sem coordenadas válidas (evita calcular distância do polo 0,0)
+            py = p.get('py')
+            px = p.get('px')
+            if not py or not px:
+                continue
+            try:
+                dist = calcular_distancia_haversine(lat_u, lon_u, float(py), float(px))
+            except (ValueError, TypeError):
+                continue
+            if dist <= 400:
+                pontos.append({'cp': p['cp'], 'np': p['np'], 'dist': int(dist)})
         
         pontos = sorted(pontos, key=lambda x: x['dist'])[:5]
+        if not pontos:
+            st.info("Nenhuma parada encontrada num raio de 400m da sua localização.")
         for p in pontos:
             with st.expander(f"🚏 {p['np']} ({p['dist']}m)"):
-                prev = sessao.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={p['cp']}").json()
-                if prev and prev.get('p') and 'l' in prev['p']:
-                    for lin in prev['p']['l']:
-                        st.write(f"🚌 **{lin['c']}** ➔ {lin['vs'][0]['t']} (Prefixo: {lin['vs'][0]['p']})")
-                else: st.caption("Nenhuma previsão agora.")
+                try:
+                    prev = sessao.get(f"http://api.olhovivo.sptrans.com.br/v2.1/Previsao/Parada?codigoParada={p['cp']}", timeout=10).json()
+                    if prev and prev.get('p') and 'l' in prev['p']:
+                        for lin in prev['p']['l']:
+                            st.write(f"🚌 **{lin['c']}** ➔ {lin['vs'][0]['t']} (Prefixo: {lin['vs'][0]['p']})")
+                    else:
+                        st.caption("Nenhuma previsão agora.")
+                except Exception as e:
+                    st.caption(f"Erro ao buscar previsão: {e}")
     else: st.warning("Ative o GPS para ver paradas próximas.")
 
 # ==========================================
@@ -342,12 +396,22 @@ with aba_london:
     l_tfl = st.text_input("Número da Linha em Londres (Ex: 15, 390):", key="in_tfl")
     if l_tfl:
         with st.spinner("Consultando TfL API..."):
-            res_tfl = requests.get(f"https://api.tfl.gov.uk/line/{l_tfl}/arrivals").json()
-            if isinstance(res_tfl, list) and res_tfl:
-                df = pd.DataFrame([{
-                    "Destino": a['destinationName'], 
-                    "Minutos": a['timeToStation'] // 60,
-                    "Localização": a['stationName']
-                } for a in res_tfl]).sort_values("Minutos")
-                st.table(df)
-            else: st.warning("Linha não encontrada em Londres.")
+            try:
+                res_tfl = requests.get(f"https://api.tfl.gov.uk/line/{l_tfl}/arrivals", timeout=10).json()
+                if isinstance(res_tfl, list) and res_tfl:
+                    df = pd.DataFrame([{
+                        "Destino": a['destinationName'], 
+                        "Minutos": a['timeToStation'] // 60,
+                        "Localização": a['stationName']
+                    } for a in res_tfl]).sort_values("Minutos")
+                    st.table(df)
+                elif isinstance(res_tfl, dict) and res_tfl.get('type') == 'Error':
+                    st.error(f"TfL API: {res_tfl.get('message', 'Erro desconhecido')}")
+                else:
+                    st.warning("Linha não encontrada em Londres.")
+            except requests.exceptions.Timeout:
+                st.error("⏱️ Timeout ao consultar a TfL. Tente novamente.")
+            except requests.exceptions.ConnectionError:
+                st.error("🌐 Sem conexão com a TfL API.")
+            except Exception as e:
+                st.error(f"Erro inesperado ao consultar TfL: {e}")
