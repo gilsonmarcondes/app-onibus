@@ -133,7 +133,7 @@ aba_rota, aba_monitor, aba_ponto, aba_london = st.tabs([
 ])
 
 # ==========================================
-# ABA 1: PLANEJADOR (O TRUQUE DO ENTER)
+# ABA 1: PLANEJADOR (REVISÃO FINAL)
 # ==========================================
 with aba_rota:
     st.subheader("Para onde vamos hoje?")
@@ -196,29 +196,51 @@ with aba_rota:
         if st.session_state.get('destino_sel'):
             st.info(f"Destino: {st.session_state['destino_sel']['nome']}")
 
-    # --- BOTÃO DE TRAÇAR ROTA ---
+    # --- BOTÃO DE TRAÇAR ROTA COM OPÇÕES AVANÇADAS ---
     if st.session_state.get('origem_sel') and st.session_state.get('destino_sel'):
         st.divider()
+        
+        # O MENU QUE ESTAVA FALTANDO VOLTOU AQUI
+        with st.expander("⚙️ Opções Avançadas de Trajeto"):
+            col_m, col_p, col_h = st.columns(3)
+            with col_m:
+                modo_trans = st.selectbox("Transporte:", ["transit", "walking", "driving"], format_func=lambda x: "🚌 Ônibus/Metrô" if x=="transit" else ("🚶 A pé" if x=="walking" else "🚗 Carro"))
+            with col_p:
+                prioridade = st.selectbox("Prioridade:", ["best_guess", "fewer_transfers", "less_walking"], format_func=lambda x: "⚡ Mais Rápido" if x=="best_guess" else ("🔄 Menos Trocas" if x=="fewer_transfers" else "🚶 Menos Caminhada"))
+            with col_h:
+                tipo_h = st.selectbox("Horário:", ["Sair Agora", "Partida às...", "Chegada às..."])
+                hora_escolhida = st.time_input("Selecione a hora:", value=datetime.now().time()) if tipo_h != "Sair Agora" else None
+
         if st.button("🚀 TRAÇAR ROTA AGORA", type="primary"):
             with st.spinner("Consultando Google Maps..."):
                 o = st.session_state['origem_sel']['coord']
                 d = st.session_state['destino_sel']['coord']
                 
-                # Deixando o Python formatar a URL com segurança (Evita o erro de Parâmetros Inválidos)
                 url = "https://maps.googleapis.com/maps/api/directions/json"
+                
+                # Montando os parâmetros dinamicamente de forma segura
                 parametros = {
                     "origin": str(o).strip(),
                     "destination": str(d).strip(),
-                    "mode": "transit",
+                    "mode": modo_trans,
                     "language": "pt-BR",
                     "key": CHAVE_GOOGLE
                 }
+                
+                if modo_trans == "transit":
+                    parametros["transit_routing_preference"] = prioridade
+                
+                if tipo_h != "Sair Agora" and hora_escolhida:
+                    dt = datetime.combine(datetime.today(), hora_escolhida)
+                    ts_calc = int(time_lib.mktime(dt.timetuple()))
+                    if tipo_h == "Partida às...": parametros["departure_time"] = ts_calc
+                    else: parametros["arrival_time"] = ts_calc
                 
                 try:
                     resp = requests.get(url, params=parametros).json()
                     if resp.get('status') == 'OK': 
                         st.session_state['rota_ativa'] = resp['routes'][0]
-                        st.rerun() # Força a tela a atualizar imediatamente com o mapa
+                        st.rerun() 
                     else: 
                         st.error(f"O Google recusou a rota. Status: {resp.get('status')}")
                 except Exception as e:
@@ -246,8 +268,7 @@ with aba_rota:
             folium.PolyLine(pts, color="#004a99", weight=6, opacity=0.8).add_to(m)
             folium.Marker(pts[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
             folium.Marker(pts[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
-            st_folium(m, width=700, height=500, key="mapa_planejador_v65")
-
+            st_folium(m, width=700, height=500, key="mapa_planejador_v_revisao")
 # ==========================================
 # ABA 2: MONITOR DE FROTA + QUADRO DE HORÁRIOS
 # ==========================================
