@@ -193,9 +193,11 @@ if menu == "🗺️ Planejador":
                     "destination": str(d).strip(),
                     "mode": modo_trans,
                     "language": "pt-BR",
-                    "key": CHAVE_GOOGLE
+                    "key": CHAVE_GOOGLE,
+                    "alternatives": "true"  # <--- O SEGREDO ESTÁ AQUI!
                 }
                 
+                # Só envia a preferência de trânsito se não for o padrão
                 if modo_trans == "transit" and prioridade != "padrao":
                     parametros["transit_routing_preference"] = prioridade
                 
@@ -213,27 +215,61 @@ if menu == "🗺️ Planejador":
                 try:
                     resp = requests.get(url, params=parametros).json()
                     if resp.get('status') == 'OK': 
-                        st.session_state['rota_ativa'] = resp['routes'][0]
+                        # AGORA SALVAMOS TODAS AS ROTAS, NÃO SÓ A PRIMEIRA
+                        st.session_state['rotas_opcoes'] = resp['routes'] 
                         st.rerun() 
                     else: 
                         st.error(f"O Google recusou a rota. Status: {resp.get('status')}")
                 except Exception as e:
                     st.error(f"Erro de conexão com o Google: {e}")
 
-    # EXIBIÇÃO DO MAPA E INSTRUÇÕES
-    if st.session_state.get('rota_ativa'):
+    # ==========================
+    # EXIBIÇÃO DO MAPA COM MÚLTIPLAS OPÇÕES
+    # ==========================
+    if st.session_state.get('rotas_opcoes'):
         st.divider()
-        r = st.session_state['rota_ativa']
-        leg = r['legs'][0]
-        st.success(f"⏱️ Tempo: **{leg['duration']['text']}** | 🏁 Chegada: **{leg.get('arrival_time', {}).get('text', 'N/D')}**")
+        rotas = st.session_state['rotas_opcoes']
         
+        # 1. SELETOR DE ROTAS
+        if len(rotas) > 1:
+            st.markdown("### 🔀 Opções Encontradas")
+            
+            # Criamos os nomes para os botões baseados nas linhas de transporte
+            nomes_rotas = []
+            for i, r in enumerate(rotas):
+                leg = r['legs'][0]
+                duracao = leg['duration']['text']
+                
+                # Tenta extrair o nome dos ônibus/metrôs (se existirem)
+                linhas = []
+                for s in leg['steps']:
+                    if 'transit_details' in s:
+                        nome_linha = s['transit_details']['line'].get('short_name', s['transit_details']['line'].get('name', ''))
+                        if nome_linha: linhas.append(nome_linha)
+                
+                resumo = " + ".join(linhas) if linhas else r.get('summary', 'Trajeto')
+                nomes_rotas.append(f"{duracao} ({resumo})")
+            
+            # Mostra as opções em botões na horizontal
+            idx_selecionado = st.radio("Escolha sua rota:", range(len(rotas)), format_func=lambda x: nomes_rotas[x], horizontal=True)
+        else:
+            idx_selecionado = 0
+            st.success("Apenas uma rota foi sugerida para este trajeto.")
+
+        # 2. SEPARA A ROTA ESCOLHIDA PARA RENDERIZAR
+        r = rotas[idx_selecionado]
+        leg = r['legs'][0]
+        
+        st.info(f"🏁 Chegada prevista: **{leg.get('arrival_time', {}).get('text', 'N/D')}** | 🚶 Caminhada total: **{r.get('summary', 'N/D')}**")
+        
+        # 3. MOSTRA O MAPA E O PASSO A PASSO
         c1, c2 = st.columns([4, 6])
         with c1:
             for s in leg['steps']:
                 txt = s['html_instructions'].replace('<b>', '**').replace('</b>', '**')
                 st.markdown(f'<div class="instrucao-passo">{txt}</div>', unsafe_allow_html=True)
             if st.button("🗑️ Nova Busca"):
-                st.session_state['rota_ativa'] = None
+                st.session_state['rotas_opcoes'] = None
                 st.session_state['origem_sel'] = None
                 st.session_state['destino_sel'] = None
                 st.rerun()
@@ -243,7 +279,9 @@ if menu == "🗺️ Planejador":
             folium.PolyLine(pts, color="#004a99", weight=6, opacity=0.8).add_to(m)
             folium.Marker(pts[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
             folium.Marker(pts[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
-            st_folium(m, width=700, height=500, key="mapa_planejador")
+            
+            # Força o st_folium a atualizar quando a rota muda adicionando a chave dinâmica
+            st_folium(m, width=700, height=500, key=f"mapa_planejador_{idx_selecionado}")
 
 # ==========================================
 # PÁGINA 2: MONITOR DE FROTA
