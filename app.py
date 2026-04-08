@@ -84,7 +84,7 @@ if 'destino_sel' not in st.session_state: st.session_state['destino_sel'] = None
 # ==========================================
 with st.sidebar:
     st.markdown('<p style="font-size:24px; font-weight:800; color:white;">🚌 BusRadar Pro</p>', unsafe_allow_html=True)
-    st.caption("v7.5 · Autocompletar & Bug Fixado")
+    st.caption("v7.6 · Autocompletar & Rotas Corrigidas")
     st.divider()
     
     menu = st.radio("Navegação:", ["🗺️ Planejador", "🚌 Monitor", "📍 Radar", "🇬🇧 Londres"])
@@ -101,7 +101,7 @@ with st.sidebar:
     st.info("Dados locais carregados.")
 
 # ==========================================
-# PÁGINA 1: PLANEJADOR (COM AUTOCOMPLETAR)
+# PÁGINA 1: PLANEJADOR
 # ==========================================
 if menu == "🗺️ Planejador":
     st.subheader("Para onde vamos hoje?")
@@ -113,7 +113,6 @@ if menu == "🗺️ Planejador":
         opcoes = api_google.buscar_lugares_google(termo, CHAVE_GOOGLE)
         if not opcoes:
             return []
-        # Retorna a tupla (Texto Visível, Dicionário de Dados com Coord)
         return [(nome, {"nome": nome, "coord": f"{dados['lat']},{dados['lng']}"}) for nome, dados in opcoes.items()]
     # ----------------------------------------------
     
@@ -165,7 +164,7 @@ if menu == "🗺️ Planejador":
             st.info(f"Destino: {st.session_state['destino_sel']['nome']}")
 
     # ==========================
-    # BOTÃO DE ROTA (CORREÇÃO BUG 12:36)
+    # BOTÃO DE ROTA E OPÇÕES AVANÇADAS
     # ==========================
     if st.session_state.get('origem_sel') and st.session_state.get('destino_sel'):
         st.divider()
@@ -175,7 +174,8 @@ if menu == "🗺️ Planejador":
             with col_m:
                 modo_trans = st.selectbox("Transporte:", ["transit", "walking", "driving"], format_func=lambda x: "🚌 Ônibus/Metrô" if x=="transit" else ("🚶 A pé" if x=="walking" else "🚗 Carro"))
             with col_p:
-                prioridade = st.selectbox("Prioridade:", ["best_guess", "fewer_transfers", "less_walking"], format_func=lambda x: "⚡ Mais Rápido" if x=="best_guess" else ("🔄 Menos Trocas" if x=="fewer_transfers" else "🚶 Menos Caminhada"))
+                # O "padrao" substitui o "best_guess" problemático
+                prioridade = st.selectbox("Prioridade:", ["padrao", "fewer_transfers", "less_walking"], format_func=lambda x: "⚡ Padrão Google" if x=="padrao" else ("🔄 Menos Trocas" if x=="fewer_transfers" else "🚶 Menos Caminhada"))
             with col_h1:
                 tipo_h = st.selectbox("Horário:", ["Sair Agora", "Partida às...", "Chegada às..."])
             with col_h2:
@@ -200,7 +200,8 @@ if menu == "🗺️ Planejador":
                     "key": CHAVE_GOOGLE
                 }
                 
-                if modo_trans == "transit":
+                # Só envia a preferência de trânsito se não for o padrão
+                if modo_trans == "transit" and prioridade != "padrao":
                     parametros["transit_routing_preference"] = prioridade
                 
                 if tipo_h != "Sair Agora" and hora_escolhida and data_escolhida:
