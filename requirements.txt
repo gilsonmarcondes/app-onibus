@@ -1,9 +1,8 @@
 streamlit
+pandas
 requests
 folium
 streamlit-folium
-streamlit-geolocation
-googlemaps
-polyline
-pytz
 streamlit-autorefresh
+streamlit-geolocation
+streamlit-searchbox

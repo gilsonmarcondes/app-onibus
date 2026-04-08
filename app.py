@@ -3,6 +3,7 @@ import folium
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 from streamlit_geolocation import streamlit_geolocation
+from streamlit_searchbox import st_searchbox
 from datetime import datetime
 import time as time_lib
 import requests
@@ -13,7 +14,7 @@ import api_sptrans
 import api_tfl
 
 # ==========================================
-# 1. FUNÇÕES AUXILIARES (Decodificador de Rota do Google)
+# 1. FUNÇÕES AUXILIARES
 # ==========================================
 def decode_poly(p):
     index, lat, lng = 0, 0, 0
@@ -83,7 +84,7 @@ if 'destino_sel' not in st.session_state: st.session_state['destino_sel'] = None
 # ==========================================
 with st.sidebar:
     st.markdown('<p style="font-size:24px; font-weight:800; color:white;">🚌 BusRadar Pro</p>', unsafe_allow_html=True)
-    st.caption("v7.0 · Modularizado & Bug Fixado")
+    st.caption("v7.5 · Autocompletar & Bug Fixado")
     st.divider()
     
     menu = st.radio("Navegação:", ["🗺️ Planejador", "🚌 Monitor", "📍 Radar", "🇬🇧 Londres"])
@@ -97,13 +98,24 @@ with st.sidebar:
         st.warning("📡 Aguardando sinal de satélite...")
     
     st.divider()
-    st.info(f"Dados locais carregados.")
+    st.info("Dados locais carregados.")
 
 # ==========================================
-# PÁGINA 1: PLANEJADOR
+# PÁGINA 1: PLANEJADOR (COM AUTOCOMPLETAR)
 # ==========================================
 if menu == "🗺️ Planejador":
     st.subheader("Para onde vamos hoje?")
+    
+    # --- Função adaptadora para o Autocompletar ---
+    def pesquisar_lugares_auto(termo: str):
+        if not termo or len(termo) < 3:
+            return []
+        opcoes = api_google.buscar_lugares_google(termo, CHAVE_GOOGLE)
+        if not opcoes:
+            return []
+        # Retorna a tupla (Texto Visível, Dicionário de Dados com Coord)
+        return [(nome, {"nome": nome, "coord": f"{dados['lat']},{dados['lng']}"}) for nome, dados in opcoes.items()]
+    # ----------------------------------------------
     
     col_a, col_b = st.columns(2)
     
@@ -115,19 +127,17 @@ if menu == "🗺️ Planejador":
             if lat_u:
                 st.session_state['origem_sel'] = {"nome": "Sua localização atual", "coord": f"{lat_u},{lon_u}"}
                 st.success("📍 GPS selecionado!")
-            else: st.warning("GPS não detectado.")
+            else: 
+                st.warning("GPS não detectado.")
                 
         elif t_o == "🔍 Digitar Endereço":
-            busca_o = st.text_input("Local de saída (Digite e aperte ENTER):", placeholder="Ex: Metrô Ana Rosa")
-            
-            if len(busca_o) >= 3:
-                opcoes = api_google.buscar_lugares_google(busca_o, CHAVE_GOOGLE)
-                if opcoes:
-                    sel_o = st.selectbox("Confirme o local correto:", list(opcoes.keys()), key="res_o")
-                    if st.button("✅ Confirmar Origem"):
-                        st.session_state['origem_sel'] = {"nome": sel_o, "coord": f"{opcoes[sel_o]['lat']},{opcoes[sel_o]['lng']}"}
-                        st.rerun()
-                else: st.error("Local não encontrado pelo Google.")
+            selecao_o = st_searchbox(
+                pesquisar_lugares_auto, 
+                key="box_origem", 
+                placeholder="Ex: Metrô Ana Rosa..."
+            )
+            if selecao_o:
+                st.session_state['origem_sel'] = selecao_o
 
         if st.session_state.get('origem_sel') and t_o == "🔍 Digitar Endereço":
             st.info(f"Origem: {st.session_state['origem_sel']['nome']}")
@@ -143,18 +153,15 @@ if menu == "🗺️ Planejador":
             else:
                 st.warning("GPS não detectado.")
         else:
-            busca_d = st.text_input("Para onde vai (Digite e aperte ENTER):", placeholder="Ex: Aeroporto Congonhas")
+            selecao_d = st_searchbox(
+                pesquisar_lugares_auto, 
+                key="box_destino", 
+                placeholder="Ex: Aeroporto Congonhas..."
+            )
+            if selecao_d:
+                st.session_state['destino_sel'] = selecao_d
 
-            if len(busca_d) >= 3:
-                opcoes_d = api_google.buscar_lugares_google(busca_d, CHAVE_GOOGLE)
-                if opcoes_d:
-                    sel_d = st.selectbox("Confirme o destino correto:", list(opcoes_d.keys()), key="res_d")
-                    if st.button("✅ Confirmar Destino"):
-                        st.session_state['destino_sel'] = {"nome": sel_d, "coord": f"{opcoes_d[sel_d]['lat']},{opcoes_d[sel_d]['lng']}"}
-                        st.rerun()
-                else: st.error("Local não encontrado pelo Google.")
-
-        if st.session_state.get('destino_sel'):
+        if st.session_state.get('destino_sel') and t_d == "🔍 Digitar Endereço":
             st.info(f"Destino: {st.session_state['destino_sel']['nome']}")
 
     # ==========================
@@ -172,7 +179,6 @@ if menu == "🗺️ Planejador":
             with col_h1:
                 tipo_h = st.selectbox("Horário:", ["Sair Agora", "Partida às...", "Chegada às..."])
             with col_h2:
-                # Agora o usuário escolhe a data também!
                 if tipo_h != "Sair Agora":
                     data_escolhida = st.date_input("Data:", value=datetime.today().date())
                     hora_escolhida = st.time_input("Hora:", value=datetime.now().time())
@@ -201,7 +207,6 @@ if menu == "🗺️ Planejador":
                     dt = datetime.combine(data_escolhida, hora_escolhida)
                     ts_calc = int(time_lib.mktime(dt.timetuple()))
                     
-                    # TRAVA: Impede envio de rotas de partida no passado!
                     if tipo_h == "Partida às..." and ts_calc < int(time_lib.time()):
                         st.error("⚠️ O horário de partida não pode estar no passado! Ajuste a data ou a hora.")
                         st.stop()
